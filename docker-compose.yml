@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: staysync
+      POSTGRES_PASSWORD: staysync
+      POSTGRES_DB: staysync
+    ports: ['5432:5432']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U staysync']
+      interval: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports: ['5672:5672', '15672:15672']
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 5s
+      retries: 20
+
+  app:
+    build: .
+    ports: ['3000:3000']
+    environment:
+      DATABASE_URL: postgresql://staysync:staysync@postgres:5432/staysync
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      API_KEY: dev-api-key
+      OTA_BASE_URL: http://mock-ota:4000
+      OTA_WEBHOOK_SECRET: dev-webhook-secret
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
