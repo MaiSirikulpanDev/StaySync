@@ -24,3 +24,14 @@ export function IsDateOnly(options?: ValidationOptions): PropertyDecorator {
       validator: { validate: isDateOnly },
     });
 }
+
+const DAY_MS = 86_400_000;
+
+/** Every date in [checkIn, checkOut). */
+export function nightsBetween(checkIn: string, checkOut: string): string[] {
+  const out: string[] = [];
+  for (let t = Date.parse(checkIn); t < Date.parse(checkOut); t += DAY_MS) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}

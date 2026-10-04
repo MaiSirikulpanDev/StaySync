@@ -9,6 +9,7 @@ import { HealthModule } from './health/health.module';
 import { PricingModule } from './pricing/pricing.module';
 import { PropertiesModule } from './properties/properties.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { StaysModule } from './stays/stays.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PrismaModule } from './prisma/prisma.module';
     HealthModule,
     PropertiesModule,
     PricingModule,
+    StaysModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ApiKeyGuard },

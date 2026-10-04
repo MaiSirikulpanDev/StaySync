@@ -1,3 +1,5 @@
+import { nightsBetween } from '../common/dates';
+
 // Pure pricing. Dates are 'YYYY-MM-DD' strings: nights are calendar dates, so no timezones.
 export interface PricingRule {
   id: string;
@@ -28,16 +30,6 @@ export interface Quote {
   currency: string;
   minStay: number;
   meetsMinStay: boolean;
-}
-
-const DAY_MS = 86_400_000;
-
-function nightsBetween(checkIn: string, checkOut: string): string[] {
-  const out: string[] = [];
-  for (let t = Date.parse(checkIn); t < Date.parse(checkOut); t += DAY_MS) {
-    out.push(new Date(t).toISOString().slice(0, 10));
-  }
-  return out;
 }
 
 const covers = (r: PricingRule, date: string) =>

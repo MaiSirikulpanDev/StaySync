@@ -24,6 +24,7 @@ model Property {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   pricingRules  PricingRule[]
+  stays         Stay[]
 }
 
 model PricingRule {
@@ -39,4 +40,42 @@ model PricingRule {
   priority      Int             @default(0)
 
   @@index([propertyId])
+}
+
+enum StayKind {
+  BOOKING
+  BLOCK
+}
+
+enum StayStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+enum StaySource {
+  DIRECT
+  ICAL
+  MOCK_OTA
+}
+
+// The no-overlap EXCLUDE constraint and CHECK (checkOut > checkIn) live in raw SQL in the migration.
+model Stay {
+  id         String     @id @default(uuid()) @db.Uuid
+  propertyId String     @db.Uuid
+  property   Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  kind       StayKind
+  status     StayStatus @default(CONFIRMED)
+  source     StaySource @default(DIRECT)
+  externalId String?
+  checkIn    DateTime   @db.Date
+  checkOut   DateTime   @db.Date
+  guestName  String?
+  guestEmail String?
+  guests     Int?
+  totalCents Int?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@unique([source, externalId])
+  @@index([propertyId, checkIn])
 }

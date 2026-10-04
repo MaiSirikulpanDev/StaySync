@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   ArgumentsHost,
   BadRequestException,
@@ -44,5 +45,54 @@ describe('AllExceptionsFilter', () => {
         message: 'Internal server error',
       },
     });
+  });
+});
+
+describe('AllExceptionsFilter database errors', () => {
+  const clientVersion = 'test';
+
+  it('maps an exclusion violation (23P01) to 409 DATES_UNAVAILABLE', () => {
+    const e = new Prisma.PrismaClientUnknownRequestError(
+      'conflicting key value violates exclusion constraint "stay_no_overlap"',
+      { clientVersion },
+    );
+    expect(run(e)).toEqual({
+      status: 409,
+      body: {
+        statusCode: 409,
+        code: 'DATES_UNAVAILABLE',
+        message: 'Dates are not available',
+      },
+    });
+  });
+
+  it('recognises the violation when surfaced as a raw-query error carrying the pg code', () => {
+    const e = new Prisma.PrismaClientKnownRequestError('Raw query failed', {
+      code: 'P2010',
+      clientVersion,
+      meta: { code: '23P01' },
+    });
+    expect(run(e).status).toBe(409);
+  });
+
+  it('maps a unique violation (P2002) to 409 ALREADY_EXISTS', () => {
+    const e = new Prisma.PrismaClientKnownRequestError(
+      'Unique constraint failed',
+      {
+        code: 'P2002',
+        clientVersion,
+      },
+    );
+    expect(run(e)).toMatchObject({
+      status: 409,
+      body: { code: 'ALREADY_EXISTS' },
+    });
+  });
+
+  it('does not mistake other database errors for overlaps', () => {
+    const e = new Prisma.PrismaClientUnknownRequestError('connection reset', {
+      clientVersion,
+    });
+    expect(run(e).status).toBe(500);
   });
 });
