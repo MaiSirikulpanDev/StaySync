@@ -6,3 +6,37 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum PricingRuleType {
+  SEASONAL
+  WEEKEND
+}
+
+model Property {
+  id            String        @id @default(uuid()) @db.Uuid
+  name          String
+  timezone      String
+  currency      String        @db.Char(3)
+  baseRateCents Int
+  minStay       Int           @default(1)
+  maxGuests     Int
+  icalToken     String        @unique
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  pricingRules  PricingRule[]
+}
+
+model PricingRule {
+  id            String          @id @default(uuid()) @db.Uuid
+  propertyId    String          @db.Uuid
+  property      Property        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  type          PricingRuleType
+  startDate     DateTime?       @db.Date
+  endDate       DateTime?       @db.Date
+  rateCents     Int?
+  adjustPercent Int?
+  minStay       Int?
+  priority      Int             @default(0)
+
+  @@index([propertyId])
+}

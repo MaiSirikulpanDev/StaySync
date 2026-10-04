@@ -6,6 +6,8 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { ApiKeyGuard } from './common/api-key.guard';
 import { parseEnv } from './config/env.schema';
 import { HealthModule } from './health/health.module';
+import { PricingModule } from './pricing/pricing.module';
+import { PropertiesModule } from './properties/properties.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
@@ -24,6 +26,8 @@ import { PrismaModule } from './prisma/prisma.module';
     }),
     PrismaModule,
     HealthModule,
+    PropertiesModule,
+    PricingModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ApiKeyGuard },
