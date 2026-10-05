@@ -12,6 +12,8 @@ export interface OtaCall {
 export interface MockOta {
   calls: OtaCall[];
   failNext(n: number): void;
+  /** Serves this iCal text at /listings/:id/calendar.ics. */
+  setCalendar(listingId: string, ics: string): void;
   reset(): void;
   stop(): Promise<void>;
 }
@@ -30,6 +32,7 @@ export async function startMockOta(
 ): Promise<MockOta> {
   const calls: OtaCall[] = [];
   let failing = opts.failFirst ?? 0;
+  const calendars = new Map<string, string>();
 
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
@@ -38,6 +41,7 @@ export async function startMockOta(
         .writeHead(status, { 'content-type': 'application/json' })
         .end(JSON.stringify(body));
     };
+    const cal = url.pathname.match(/^\/listings\/([^/]+)\/calendar\.ics$/);
     const push = url.pathname.match(/^\/listings\/([^/]+)\/availability$/);
 
     if (req.method === 'PUT' && push) {
@@ -66,6 +70,14 @@ export async function startMockOta(
           json(200, { status: r.status, body: await r.json() }),
         );
       });
+    } else if (cal) {
+      if (req.method === 'GET' && calendars.has(cal[1])) {
+        res
+          .writeHead(200, { 'content-type': 'text/calendar' })
+          .end(calendars.get(cal[1]));
+      } else {
+        json(404, { error: 'no calendar' });
+      }
     } else if (req.method === 'GET' && url.pathname === '/_calls') {
       json(200, calls);
     } else {
@@ -77,8 +89,10 @@ export async function startMockOta(
   return {
     calls,
     failNext: (n) => (failing = n),
+    setCalendar: (id, ics) => void calendars.set(id, ics),
     reset: () => {
       calls.length = 0;
+      calendars.clear();
       failing = 0;
     },
     stop: () => new Promise((resolve) => server.close(() => resolve())),

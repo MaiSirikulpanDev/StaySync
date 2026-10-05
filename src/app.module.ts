@@ -7,6 +7,7 @@ import { ApiKeyGuard } from './common/api-key.guard';
 import { parseEnv } from './config/env.schema';
 import { HealthModule } from './health/health.module';
 import { ChannelsModule } from './channels/channels.module';
+import { IcalModule } from './channels/ical/ical.module';
 import { MockOtaModule } from './channels/mock-ota/mock-ota.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { OutboxModule } from './outbox/outbox.module';
@@ -39,6 +40,7 @@ import { StaysModule } from './stays/stays.module';
     StaysModule,
     MockOtaModule,
     ChannelsModule,
+    IcalModule,
     SyncIssuesModule,
   ],
   providers: [
