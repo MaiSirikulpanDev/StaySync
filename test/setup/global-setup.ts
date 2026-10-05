@@ -15,6 +15,9 @@ export default async function setup() {
     RABBITMQ_URL: mq.getAmqpUrl(),
     API_KEY: 'test-key',
     OTA_WEBHOOK_SECRET: 'test-secret',
+    OTA_BASE_URL: 'http://127.0.0.1:4010',
+    RETRY_DELAY_MS: '500',
+    OUTBOX_POLL_MS: '200',
   });
   execSync('npx prisma migrate deploy', { stdio: 'inherit', env: process.env });
 }

@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Stay, StayKind, StayStatus } from '@prisma/client';
 import { toDay } from '../common/dates';
+import { OutboxService } from '../outbox/outbox.service';
 import { PricingService } from '../pricing/pricing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PropertiesService } from '../properties/properties.service';
@@ -23,6 +24,15 @@ const view = (s: Stay) => ({
   checkOut: toDay(s.checkOut),
 });
 
+const eventPayload = (s: Stay) => ({
+  stayId: s.id,
+  propertyId: s.propertyId,
+  source: s.source,
+  kind: s.kind,
+  checkIn: toDay(s.checkIn),
+  checkOut: toDay(s.checkOut),
+});
+
 function assertRange(from: string, to: string) {
   if (to <= from)
     throw new BadRequestException('End date must be after start date');
@@ -34,6 +44,7 @@ export class StaysService {
     private readonly prisma: PrismaService,
     private readonly properties: PropertiesService,
     private readonly pricing: PricingService,
+    private readonly outbox: OutboxService,
   ) {}
 
   /**
@@ -61,19 +72,23 @@ export class StaysService {
       totalCents = q.totalCents;
     }
 
-    const stay = await this.prisma.stay.create({
-      data: {
-        propertyId,
-        kind: dto.kind,
-        checkIn: new Date(dto.checkIn),
-        checkOut: new Date(dto.checkOut),
-        totalCents,
-        ...(isBooking && {
-          guestName: dto.guestName,
-          guestEmail: dto.guestEmail,
-          guests: dto.guests,
-        }),
-      },
+    const stay = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.stay.create({
+        data: {
+          propertyId,
+          kind: dto.kind,
+          checkIn: new Date(dto.checkIn),
+          checkOut: new Date(dto.checkOut),
+          totalCents,
+          ...(isBooking && {
+            guestName: dto.guestName,
+            guestEmail: dto.guestEmail,
+            guests: dto.guests,
+          }),
+        },
+      });
+      await this.outbox.add(tx, 'stay.created', eventPayload(created));
+      return created;
     });
     return view(stay);
   }
@@ -96,12 +111,17 @@ export class StaysService {
     const stay = await this.prisma.stay.findUnique({ where: { id } });
     if (!stay) throw new NotFoundException('Stay not found');
     if (stay.status === StayStatus.CANCELLED) return view(stay);
-    return view(
-      await this.prisma.stay.update({
-        where: { id },
+    // Conditional update: of two racing cancels only one flips the row, so only one event is written.
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.stay.updateMany({
+        where: { id, status: StayStatus.CONFIRMED },
         data: { status: StayStatus.CANCELLED },
-      }),
-    );
+      });
+      const cancelled = await tx.stay.findUniqueOrThrow({ where: { id } });
+      if (count)
+        await this.outbox.add(tx, 'stay.cancelled', eventPayload(cancelled));
+      return view(cancelled);
+    });
   }
 
   async availability(propertyId: string, { from, to }: AvailabilityQueryDto) {

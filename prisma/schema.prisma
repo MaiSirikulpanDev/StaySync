@@ -25,6 +25,7 @@ model Property {
   updatedAt     DateTime      @updatedAt
   pricingRules  PricingRule[]
   stays         Stay[]
+  channels      Channel[]
 }
 
 model PricingRule {
@@ -78,4 +79,32 @@ model Stay {
 
   @@unique([source, externalId])
   @@index([propertyId, checkIn])
+}
+
+enum ChannelType {
+  ICAL
+  MOCK_OTA
+}
+
+// config: ICAL -> { url }, MOCK_OTA -> { listingId }
+model Channel {
+  id            String      @id @default(uuid()) @db.Uuid
+  propertyId    String      @db.Uuid
+  property      Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  type          ChannelType
+  config        Json
+  active        Boolean     @default(true)
+  lastSyncedAt  DateTime?
+  lastSyncError String?
+
+  @@index([propertyId])
+}
+
+model OutboxEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  type        String
+  payload     Json
+  createdAt   DateTime  @default(now())
+  publishedAt DateTime?
+  attempts    Int       @default(0)
 }

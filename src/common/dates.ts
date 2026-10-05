@@ -35,3 +35,6 @@ export function nightsBetween(checkIn: string, checkOut: string): string[] {
   }
   return out;
 }
+
+export const addDays = (day: string, n: number) =>
+  new Date(Date.parse(day) + n * DAY_MS).toISOString().slice(0, 10);

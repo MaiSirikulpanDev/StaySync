@@ -13,6 +13,7 @@ const schema = z.object({
   OTA_BASE_URL: z.string().url().default('http://localhost:4000'),
   OTA_WEBHOOK_SECRET: z.string().min(1),
   ICAL_POLL_CRON: z.string().default('*/15 * * * *'),
+  RETRY_DELAY_MS: z.coerce.number().int().positive().default(10000),
   OUTBOX_POLL_MS: z.coerce.number().int().positive().default(1000),
 });
 
