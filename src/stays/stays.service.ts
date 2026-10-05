@@ -9,6 +9,7 @@ import { OutboxService } from '../outbox/outbox.service';
 import { PricingService } from '../pricing/pricing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PropertiesService } from '../properties/properties.service';
+import { eventPayload } from './stay-event';
 import { buildCalendar } from './availability';
 import {
   AvailabilityQueryDto,
@@ -20,15 +21,6 @@ const MAX_RANGE_DAYS = 366;
 
 const view = (s: Stay) => ({
   ...s,
-  checkIn: toDay(s.checkIn),
-  checkOut: toDay(s.checkOut),
-});
-
-const eventPayload = (s: Stay) => ({
-  stayId: s.id,
-  propertyId: s.propertyId,
-  source: s.source,
-  kind: s.kind,
   checkIn: toDay(s.checkIn),
   checkOut: toDay(s.checkOut),
 });

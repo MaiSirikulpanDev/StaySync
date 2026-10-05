@@ -12,7 +12,7 @@ export async function createTestApp(): Promise<INestApplication> {
     .overrideProvider(Clock)
     .useValue({ today: () => '2026-10-05' })
     .compile();
-  const app = mod.createNestApplication();
+  const app = mod.createNestApplication({ rawBody: true });
   configureApp(app);
   await app.init();
   return app;
@@ -23,5 +23,7 @@ export const KEY = { 'x-api-key': 'test-key' };
 export async function resetDb(app: INestApplication) {
   await app
     .get(PrismaService)
-    .$executeRawUnsafe('TRUNCATE "Property", "OutboxEvent" CASCADE');
+    .$executeRawUnsafe(
+      'TRUNCATE "Property", "OutboxEvent", "ProcessedWebhook" CASCADE',
+    );
 }

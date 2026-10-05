@@ -96,6 +96,7 @@ model Channel {
   active        Boolean     @default(true)
   lastSyncedAt  DateTime?
   lastSyncError String?
+  syncIssues    SyncIssue[]
 
   @@index([propertyId])
 }
@@ -107,4 +108,22 @@ model OutboxEvent {
   createdAt   DateTime  @default(now())
   publishedAt DateTime?
   attempts    Int       @default(0)
+}
+
+// Idempotency ledger for inbound OTA webhooks.
+model ProcessedWebhook {
+  eventId    String   @id
+  receivedAt DateTime @default(now())
+}
+
+model SyncIssue {
+  id         String    @id @default(uuid()) @db.Uuid
+  channelId  String    @db.Uuid
+  channel    Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  kind       String
+  detail     Json
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([channelId])
 }

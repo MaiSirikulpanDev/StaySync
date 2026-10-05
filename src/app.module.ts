@@ -6,9 +6,11 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { ApiKeyGuard } from './common/api-key.guard';
 import { parseEnv } from './config/env.schema';
 import { HealthModule } from './health/health.module';
+import { ChannelsModule } from './channels/channels.module';
 import { MockOtaModule } from './channels/mock-ota/mock-ota.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { OutboxModule } from './outbox/outbox.module';
+import { SyncIssuesModule } from './sync-issues/sync-issues.module';
 import { PricingModule } from './pricing/pricing.module';
 import { PropertiesModule } from './properties/properties.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -36,6 +38,8 @@ import { StaysModule } from './stays/stays.module';
     PricingModule,
     StaysModule,
     MockOtaModule,
+    ChannelsModule,
+    SyncIssuesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ApiKeyGuard },
