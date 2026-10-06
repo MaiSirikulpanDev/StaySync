@@ -1,10 +1,19 @@
-FROM node:24-slim AS build
+FROM node:24-slim AS deps
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npx prisma generate && npm run build && npm prune --omit=dev
+RUN npx prisma generate
+
+FROM deps AS build
+RUN npm run build && npm prune --omit=dev
+
+# Demo-only stand-in for an OTA (tools/mock-ota). Not part of the app image below.
+FROM deps AS mock-ota
+ENV PORT=4000
+EXPOSE 4000
+CMD ["npx", "ts-node", "--transpile-only", "tools/mock-ota/server.ts"]
 
 FROM node:24-slim
 WORKDIR /app

@@ -19,6 +19,17 @@ services:
       interval: 5s
       retries: 20
 
+  # Fake OTA for the demo: receives availability pushes, sends signed webhooks on demand.
+  mock-ota:
+    build:
+      context: .
+      target: mock-ota
+    environment:
+      PORT: '4000'
+      APP_URL: http://app:3000
+      OTA_WEBHOOK_SECRET: dev-webhook-secret
+    ports: ['4000:4000']
+
   app:
     build: .
     ports: ['3000:3000']
@@ -31,3 +42,4 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
+      mock-ota: { condition: service_started }
