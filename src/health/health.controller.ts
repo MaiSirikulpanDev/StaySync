@@ -1,14 +1,12 @@
 import { Controller, Get } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { ApiTags } from '@nestjs/swagger';
 import {
   HealthCheck,
   HealthCheckService,
   HealthIndicatorService,
 } from '@nestjs/terminus';
-import amqp from 'amqplib';
 import { Public } from '../common/public.decorator';
-import type { Env } from '../config/env.schema';
+import { MessagingService } from '../messaging/messaging.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('health')
@@ -19,13 +17,13 @@ export class HealthController {
     private readonly health: HealthCheckService,
     private readonly indicator: HealthIndicatorService,
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService<Env, true>,
+    private readonly messaging: MessagingService,
   ) {}
 
   @Get()
   @HealthCheck()
   check() {
-    return this.health.check([() => this.database(), () => this.rabbitmq()]);
+    return this.health.check([() => this.database(), () => this.kafka()]);
   }
 
   private async database() {
@@ -38,12 +36,10 @@ export class HealthController {
     }
   }
 
-  // Connect-and-close probe; the real messaging module arrives in M3.
-  private async rabbitmq() {
-    const i = this.indicator.check('rabbitmq');
+  private async kafka() {
+    const i = this.indicator.check('kafka');
     try {
-      const conn = await amqp.connect(this.config.get('RABBITMQ_URL'));
-      await conn.close();
+      await this.messaging.ping();
       return i.up();
     } catch (e) {
       return i.down({ message: (e as Error).message });

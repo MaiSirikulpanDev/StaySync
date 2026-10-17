@@ -4,7 +4,7 @@ import { addDays } from '../../common/dates';
 import {
   EventMessage,
   MessagingService,
-  OTA_QUEUE,
+  OTA_GROUP,
 } from '../../messaging/messaging.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StaysService } from '../../stays/stays.service';
@@ -23,10 +23,13 @@ export class OtaConsumer implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    return this.messaging.consume(OTA_QUEUE, (e) => this.handle(e));
+    return this.messaging.consume(OTA_GROUP, (e) => this.handle(e));
   }
 
-  /** Rebuilds the whole next-365-days calendar rather than applying a delta, so replays are harmless. */
+  /**
+   * Rebuilds the whole next-365-days calendar from the database rather than applying a delta, so
+   * duplicate deliveries and reordered events are harmless: the last push always reflects current state.
+   */
   async handle({ payload }: EventMessage) {
     if (payload.source === 'MOCK_OTA') return; // came from the OTA: don't echo it back
     const propertyId = payload.propertyId as string;

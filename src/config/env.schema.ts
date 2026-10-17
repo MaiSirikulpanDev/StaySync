@@ -8,7 +8,7 @@ const schema = z.object({
   DATABASE_URL: z
     .string()
     .regex(/^postgres(ql)?:\/\//, 'must be a postgres URL'),
-  RABBITMQ_URL: z.string().regex(/^amqps?:\/\//, 'must be an amqp URL'),
+  KAFKA_BROKERS: z.string().min(1),
   API_KEY: z.string().min(1),
   OTA_BASE_URL: z.string().url().default('http://localhost:4000'),
   OTA_WEBHOOK_SECRET: z.string().min(1),

@@ -23,7 +23,7 @@ OTA_IN=$(in_days 20); OTA_OUT=$(in_days 23)
 CLASH_IN=$(in_days 11); CLASH_OUT=$(in_days 12)
 LISTING="demo-$(date +%s)"
 
-say "1. Health (database + RabbitMQ)"
+say "1. Health (database + Kafka)"
 curl -s "$API/health"; echo
 
 say "2. Create a property"
@@ -48,7 +48,7 @@ say "6. Try to double-book overlapping dates -> 409 from the database constraint
 call POST "/properties/$ID/stays" \
   "{\"kind\":\"BOOKING\",\"checkIn\":\"$CLASH_IN\",\"checkOut\":\"$(in_days 15)\",\"guestName\":\"Bob\",\"guests\":1}"
 
-say "7. The booking reaches the mock OTA through the outbox and RabbitMQ"
+say "7. The booking reaches the mock OTA through the outbox and Kafka"
 for _ in $(seq 1 20); do
   CALLS=$(curl -s "$OTA/_calls")
   echo "$CALLS" | grep -q "\"listingId\":\"$LISTING\"" && break
@@ -76,4 +76,4 @@ echo "$(echo "$AV" | grep -o '"available":false' | wc -l | tr -d ' ') unavailabl
 say "11. iCal feed for Airbnb / Booking.com (no guest details)"
 curl -s "$API/properties/$ID/calendar.ics?token=$TOKEN"
 
-printf '\nDone. Swagger UI: %s/docs   RabbitMQ UI: http://localhost:15672 (guest/guest)\n' "$API"
+printf '\nDone. Swagger UI: %s/docs\n' "$API"

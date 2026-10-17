@@ -3,7 +3,9 @@
 > A small channel manager for short-term rental properties, built with NestJS.
 > This is a portfolio project that shows backend skills in a realistic domain: bookings, availability, pricing, and syncing with third-party channels.
 >
-> **For Claude:** this file is the source of truth. Build it milestone by milestone (section 9). Don't add scope or dependencies that this file doesn't list unless you write down why in `docs/adr/`. Each milestone is done only when its acceptance criteria pass and `npm test` is green.
+> **For Claude:** this file is the source of truth. Build it milestone by milestone (section 9, then section 12). Don't add scope or dependencies that this file doesn't list unless you write down why in `docs/adr/`. Each milestone is done only when its acceptance criteria pass and `npm test` is green.
+>
+> **Status:** Phase 1 (M0–M6, RabbitMQ) is done. Phase 2 (M7–M12, Kafka) is in progress (M7 done); the Phase 1 code is kept on branch `v1-rabbitmq`; where section 12 disagrees with an earlier section, section 12 wins.
 
 ---
 
@@ -461,3 +463,166 @@ Rules:
 - Half-open date ranges and timezone handling for hotels and rentals
 - What changes at 100x scale: split the worker, partition by property, CDC, per-channel rate limits
 - Link to real experience: RIS inventory centralization (cross-store stock), Astrofy PHP → Ruby → Node.js migrations, payment gateway idempotency
+- Phase 2: why Kafka over RabbitMQ here (replay, many consumer groups, per-key ordering), and what was given up (simple per-message retry, routing)
+- Partition key choice: `propertyId` gives per-property order; what a hot property does to one partition
+- At-least-once delivery plus idempotent consumers vs "exactly-once": where each duplicate can come from and which table stops it
+- Rebalancing: what happens to in-flight work when a worker dies, and why committing offsets after the side effect matters
+- Polling outbox vs Debezium CDC: latency, ops cost, and when the switch is worth it
+
+---
+
+## 12. Phase 2: Kafka and a real worker
+
+### Goals
+
+Show distributed-systems skills that match day-to-day work on Kafka-based platforms:
+
+1. **Ordering by key.** Every event for one property lands on one partition, so consumers see it in order.
+2. **At-least-once delivery, effectively-once effects.** Duplicates are expected; idempotent consumers make them harmless.
+3. **Several independent consumers** on one stream, including a read model that can be **rebuilt by replay**.
+4. **Horizontal scale and failure.** The worker runs as its own process with 2+ replicas; killing one mid-stream loses nothing and duplicates nothing.
+5. **Observability across the async hop.** One trace from HTTP request to OTA push.
+
+### Non-goals (still)
+
+- No Kubernetes, no schema registry, no Kafka Streams/ksqlDB. A versioned JSON envelope validated with `zod` is enough at this size.
+- No multi-cluster, no exactly-once transactions (`transactional.id`). Idempotent consumers are the guarantee.
+- RabbitMQ is **replaced**, not kept alongside. Tag the last Phase 1 commit `v1-rabbitmq` so the before/after stays visible.
+
+### Changes to Phase 1 decisions
+
+| Section | Phase 1 | Phase 2 |
+|---|---|---|
+| §1 non-goals | One deployable app | Two entrypoints from one codebase: `api` and `worker` (same image, different command) |
+| §2 Messaging | RabbitMQ via `amqplib` | Kafka 3.x (KRaft, single broker in compose) via `@confluentinc/kafka-javascript` (KafkaJS-compatible API). Record the client choice in ADR 0006. |
+| §2 Testing | Testcontainers Postgres + RabbitMQ | Testcontainers Postgres + `@testcontainers/kafka` |
+| §7.6 Topology | Exchange, retry queue, DLQ | Topics below |
+
+### Target architecture
+
+```mermaid
+flowchart LR
+  Client[API client / Swagger] -->|REST + API key| API[api process]
+  OTA[Mock OTA] -->|signed webhook| API
+  API --> PG[(PostgreSQL)]
+  PG -->|outbox publisher or Debezium CDC| K[[Kafka<br/>staysync.stay-events<br/>key = propertyId]]
+  K -->|group ota-sync| W1[worker replicas]
+  K -->|group occupancy-projection| W1
+  W1 -->|push availability| OTA
+  W1 -->|projection + inbox| PG
+  K -.->|failed| R[[stay-events.retry]] -.-> W1
+  R -.->|after 5 tries| D[[stay-events.dlq]]
+```
+
+### Topics
+
+| Topic | Partitions | Key | Notes |
+|---|---|---|---|
+| `staysync.stay-events` | 6 | `propertyId` | Main stream. Retention 7 days (long enough to replay the projection in demos). |
+| `staysync.stay-events.retry` | 6 | `propertyId` | Consumer re-publishes a failed event here with `x-attempt` header and a `x-not-before` timestamp; the retry consumer waits until then. |
+| `staysync.stay-events.dlq` | 1 | `propertyId` | After 5 attempts. Keep the original headers and add `x-error`. |
+
+Topics are created at worker startup with the admin client (idempotent), and in compose by the same code. No separate init container.
+
+### Event envelope
+
+```json
+{
+  "eventId": "uuid (outbox row id)",
+  "type": "stay.created | stay.cancelled | stay.updated",
+  "version": 1,
+  "propertyId": "uuid",
+  "occurredAt": "ISO timestamp",
+  "payload": { "...": "type-specific" }
+}
+```
+
+- `eventId` is the outbox row id, so a re-published event keeps the same id. This is what consumers dedupe on.
+- One `zod` schema per `type` + `version`, in `src/events/`. Producer and consumers import the same file. Unknown versions go to the DLQ, never crash the consumer.
+- Trace context (`traceparent`) travels in Kafka headers, not in the body.
+
+### New table
+
+```
+ProcessedEvent
+  consumerGroup  text
+  eventId        uuid
+  processedAt    timestamptz
+  PRIMARY KEY (consumerGroup, eventId)
+
+PropertyOccupancyDaily          -- read model owned by occupancy-projection
+  propertyId     uuid
+  date           date
+  bookedNights   int            -- 0 or 1 per date; kept as a counter for clarity
+  revenueCents   int
+  lastEventId    uuid
+  PRIMARY KEY (propertyId, date)
+```
+
+The projection writes its rows **and** the `ProcessedEvent` row in one transaction. A duplicate delivery hits the primary key and is skipped.
+
+### Milestones
+
+#### M7 Swap RabbitMQ for Kafka
+- Tag `v1-rabbitmq` before starting
+- Compose: replace `rabbitmq` with a single KRaft `apache/kafka` broker; keep health checks
+- `src/messaging/` becomes a Kafka module: idempotent producer (`acks=all`, `enable.idempotence=true`), consumer factory, admin client that creates the topics above
+- `OutboxPublisher` publishes to `staysync.stay-events` with key `propertyId`; marks `publishedAt` only after the broker acks
+- `OtaConsumer` becomes consumer group `ota-sync`. It already rebuilds the full 365-day calendar from the database, so it is naturally idempotent and order-safe; note that in the code
+- Retry topic and DLQ as above, reusing `retry.ts` for attempt counting
+- `/health` checks Kafka instead of RabbitMQ
+- Port the existing outbox and OTA sync e2e tests to Kafka; delete RabbitMQ code and the `amqplib` dependency
+- ADR 0006: RabbitMQ → Kafka (why, trade-offs, client library choice)
+
+**Done when:** every Phase 1 e2e test passes on Kafka, including "publish failure is retried, not lost" and "forced OTA failures end in the DLQ after 5 attempts", and `amqplib` is gone from `package.json`.
+
+#### M8 Event envelope and ordering
+- `src/events/` with the envelope and per-type `zod` schemas; producer validates before publishing, consumers validate on read
+- Unknown `version` or invalid payload → DLQ with `x-error`, offset committed
+- Ordering test: create, cancel, re-create stays for one property in quick succession; the consumer observes events for that property in outbox order
+
+**Done when:** the ordering e2e test passes, and an invalid message lands in the DLQ without stopping the consumer.
+
+#### M9 Second consumer and replay
+- `ProcessedEvent` and `PropertyOccupancyDaily` migrations
+- Consumer group `occupancy-projection` updates the read model and the inbox row in one transaction
+- `GET /properties/:id/occupancy?from&to` reads the projection (eventually consistent; say so in Swagger)
+- `npm run replay:occupancy`: truncate the projection and its `ProcessedEvent` rows, reset the group's offsets to earliest, let it rebuild
+- ADR 0007: inbox table for idempotent consumers
+
+**Done when:** e2e tests show (a) delivering the same event twice changes the projection once, and (b) after replay the projection equals the one built live.
+
+#### M10 Split the worker and survive failure
+- `src/worker.ts` entrypoint: outbox publisher, both consumer groups, iCal poller. `src/main.ts` keeps HTTP only
+- Same Docker image, different `command`; compose runs `api` and `worker` with `deploy.replicas: 2`
+- iCal poller made multi-instance safe with `pg_try_advisory_lock` per channel (from "What I'd do next")
+- Commit offsets only after the side effect succeeds (manual commit), so a crash means redelivery, not loss
+- Failure e2e test: start two consumers in one group, publish N events, stop one consumer mid-stream, wait for rebalance; assert every event's effect happened exactly once (projection totals and `ProcessedEvent` count = N)
+
+**Done when:** the failure test passes reliably 10 runs in a row in CI, and `docker compose up` runs two workers sharing the partitions.
+
+#### M11 CDC with Debezium (optional, do last if time allows)
+- Add Kafka Connect with the Debezium Postgres connector and the Outbox Event Router SMT to compose
+- Debezium reads `OutboxEvent` from the WAL and writes to `staysync.stay-events` with the same key and envelope; delete the polling `OutboxPublisher`
+- Retention job deletes outbox rows older than 1 day
+- ADR 0008: polling outbox vs CDC (latency, ops cost, why it's worth it now)
+
+**Done when:** all e2e tests pass with the publisher deleted, and a booking reaches the mock OTA within 2s.
+
+#### M12 Observability and polish
+- OpenTelemetry SDK in both processes; propagate `traceparent` through Kafka headers so one trace spans HTTP → outbox → Kafka → consumer → OTA. Jaeger in compose for the demo
+- Consumer lag per group and DLQ depth exposed on `/health` details (admin client offsets), not a separate metrics stack
+- README: new architecture diagram, a "Phase 1 → Phase 2" section with the trade-off table, failure-test results, and a screenshot of one end-to-end trace
+- `scripts/demo.sh`: add a step that kills one worker and shows the booking still reaches the OTA
+- Update "What I'd do next": schema registry, exactly-once transactions, partition count planning for hot properties, per-channel rate limits
+
+**Done when:** a stranger can clone, run one command, and see a booking travel through Kafka to the mock OTA, with the trace visible in Jaeger.
+
+### Phase 2 testing additions
+
+| Layer | What | Tooling |
+|---|---|---|
+| Unit | envelope schemas, retry attempt counting, projection reducer (pure) | Jest |
+| e2e | ordering per property, duplicate delivery, replay equals live, consumer crash + rebalance | Jest + Testcontainers Postgres 16 + Kafka |
+
+Rule: tests never sleep for a fixed time to wait for consumers. Poll for the expected state with a timeout.

@@ -1,19 +1,17 @@
 import { INestApplication } from '@nestjs/common';
-import amqp, { Channel, ChannelModel } from 'amqplib';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { MockOta, startMockOta } from '../tools/mock-ota/server';
 import { createTestApp, KEY, resetDb } from './setup/app';
+import { dlqCount } from './setup/kafka';
 import { waitFor } from './setup/wait';
 
 // Test clock is fixed at 2026-10-05 (see createTestApp)
-describe('OTA sync (outbox -> RabbitMQ -> consumer -> mock OTA)', () => {
+describe('OTA sync (outbox -> Kafka -> consumer -> mock OTA)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let ota: MockOta;
   let id: string;
-  let conn: ChannelModel;
-  let ch: Channel;
   const http = () => request(app.getHttpServer());
   const book = (checkIn: string, checkOut: string) =>
     http().post(`/properties/${id}/stays`).set(KEY).send({
@@ -23,24 +21,17 @@ describe('OTA sync (outbox -> RabbitMQ -> consumer -> mock OTA)', () => {
       guestName: 'Ann',
       guests: 2,
     });
-  const dlqSize = async () =>
-    (await ch.checkQueue('ota-sync.dlq')).messageCount;
+  let dlqBefore: number;
 
   beforeAll(async () => {
     ota = await startMockOta(4010);
     app = await createTestApp();
     prisma = app.get(PrismaService);
-    conn = await amqp.connect(process.env.RABBITMQ_URL!);
-    ch = await conn.createChannel();
   });
   beforeEach(async () => {
     ota.reset();
     await resetDb(app);
-    await Promise.all(
-      ['ota-sync', 'ota-sync.retry', 'ota-sync.dlq'].map((q) =>
-        ch.purgeQueue(q),
-      ),
-    );
+    dlqBefore = await dlqCount();
     const res = await http().post('/properties').set(KEY).send({
       name: 'Beach House',
       timezone: 'UTC',
@@ -54,7 +45,6 @@ describe('OTA sync (outbox -> RabbitMQ -> consumer -> mock OTA)', () => {
     });
   });
   afterAll(async () => {
-    await conn.close();
     await app.close();
     await ota.stop();
   });
@@ -118,16 +108,15 @@ describe('OTA sync (outbox -> RabbitMQ -> consumer -> mock OTA)', () => {
     await book('2026-10-08', '2026-10-10');
     await waitFor(() => ota.calls.length >= 3, 15000);
     expect(ota.calls.map((c) => c.status)).toEqual([500, 500, 200]);
-    expect(await dlqSize()).toBe(0);
+    expect(await dlqCount()).toBe(dlqBefore);
   });
 
   it('dead-letters a push that keeps failing after 5 attempts', async () => {
     ota.failNext(1000);
     await book('2026-10-08', '2026-10-10');
-    await waitFor(async () => (await dlqSize()) === 1, 30000);
+    await waitFor(async () => (await dlqCount()) === dlqBefore + 1, 30000);
     expect(ota.calls).toHaveLength(5);
     await new Promise((r) => setTimeout(r, 1000));
     expect(ota.calls).toHaveLength(5);
-    expect((await ch.checkQueue('ota-sync')).messageCount).toBe(0);
   });
 });

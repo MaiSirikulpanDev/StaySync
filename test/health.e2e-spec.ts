@@ -7,10 +7,10 @@ describe('app smoke', () => {
   beforeAll(async () => (app = await createTestApp()));
   afterAll(() => app.close());
 
-  it('serves /health ok without an API key, checking db and rabbitmq', async () => {
+  it('serves /health ok without an API key, checking db and kafka', async () => {
     const res = await request(app.getHttpServer()).get('/health').expect(200);
     expect(res.body.status).toBe('ok');
-    expect(Object.keys(res.body.info)).toEqual(['database', 'rabbitmq']);
+    expect(Object.keys(res.body.info)).toEqual(['database', 'kafka']);
   });
 
   it('serves swagger docs without an API key', async () => {

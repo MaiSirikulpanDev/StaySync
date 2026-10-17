@@ -5,18 +5,19 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import amqp, {
-  ChannelModel,
-  ConfirmChannel,
-  ConsumeMessage,
-  RecoveringChannelModel,
-} from 'amqplib';
+import { KafkaJS } from '@confluentinc/kafka-javascript';
 import type { Env } from '../config/env.schema';
-import { deathCount } from './retry';
+import {
+  ATTEMPT_HEADER,
+  attemptCount,
+  NOT_BEFORE_HEADER,
+  notBefore,
+} from './retry';
 
-export const EVENTS_EXCHANGE = 'staysync.events';
-export const RETRY_EXCHANGE = 'staysync.retry';
-export const OTA_QUEUE = 'ota-sync';
+export const EVENTS_TOPIC = 'staysync.stay-events';
+export const RETRY_TOPIC = `${EVENTS_TOPIC}.retry`;
+export const DLQ_TOPIC = `${EVENTS_TOPIC}.dlq`;
+export const OTA_GROUP = 'ota-sync';
 export const MAX_ATTEMPTS = 5;
 
 export interface EventMessage<P = Record<string, unknown>> {
@@ -26,140 +27,120 @@ export interface EventMessage<P = Record<string, unknown>> {
 }
 type Handler = (event: EventMessage) => Promise<void>;
 
-const PUBLISH_TIMEOUT_MS = 4000;
-
-/** Adapts amqplib's confirm-callback style to a promise. */
-const confirmed = (send: (cb: (err: unknown) => void) => unknown) =>
-  new Promise<void>((resolve, reject) => {
-    send((err) =>
-      err
-        ? reject(err instanceof Error ? err : new Error(JSON.stringify(err)))
-        : resolve(),
-    );
-  });
+const TOPICS = [
+  { topic: EVENTS_TOPIC, numPartitions: 6 },
+  { topic: RETRY_TOPIC, numPartitions: 6 },
+  { topic: DLQ_TOPIC, numPartitions: 1 },
+];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 @Injectable()
 export class MessagingService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MessagingService.name);
-  private conn?: RecoveringChannelModel;
-  private pub?: ConfirmChannel;
-  private readonly handlers = new Map<string, Handler>();
+  private readonly kafka: KafkaJS.Kafka;
+  private readonly producer: KafkaJS.Producer;
+  private readonly admin: KafkaJS.Admin;
+  private readonly consumers: KafkaJS.Consumer[] = [];
 
-  constructor(private readonly config: ConfigService<Env, true>) {}
-
-  async onModuleInit() {
-    this.conn = await amqp.connect(this.config.get('RABBITMQ_URL'), {
-      recovery: {
-        initialDelay: 200,
-        maxDelay: 5000,
-        // Runs after every (re)connect: declare topology, then re-attach consumers.
-        setup: (model: ChannelModel) => this.setup(model),
+  constructor(private readonly config: ConfigService<Env, true>) {
+    this.kafka = new KafkaJS.Kafka({
+      kafkaJS: {
+        clientId: 'staysync',
+        brokers: String(this.config.get('KAFKA_BROKERS')).split(','),
       },
     });
-    this.conn.on('disconnect', (e) =>
-      this.logger.warn(`RabbitMQ disconnected: ${e.message}`),
-    );
+    // acks=all + idempotence: broker-side dedupe of producer retries, no reordering.
+    this.producer = this.kafka.producer({
+      kafkaJS: { acks: -1, idempotent: true },
+    });
+    this.admin = this.kafka.admin();
+  }
+
+  async onModuleInit() {
+    await this.admin.connect();
+    // Idempotent: existing topics are left alone.
+    await this.admin.createTopics({ topics: TOPICS });
+    await this.producer.connect();
   }
 
   async onModuleDestroy() {
-    await this.conn?.close();
+    await Promise.all(this.consumers.map((c) => c.disconnect()));
+    await this.producer.disconnect();
+    await this.admin.disconnect();
   }
 
-  /** Publishes with a broker confirm; rejects if the broker does not accept it in time. */
-  publish(type: string, payload: unknown, id: string): Promise<void> {
-    const pub = this.pub;
-    if (!pub) return Promise.reject(new Error('RabbitMQ not connected'));
-    const body = Buffer.from(JSON.stringify({ id, type, payload }));
-    const send = confirmed((cb) =>
-      pub.publish(
-        EVENTS_EXCHANGE,
-        type,
-        body,
-        { persistent: true, messageId: id },
-        cb,
-      ),
-    );
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error('publish confirm timed out')),
-        PUBLISH_TIMEOUT_MS,
-      ).unref(),
-    );
-    return Promise.race([send, timeout]);
-  }
-
-  /** Registers a consumer; it is re-attached automatically after a reconnect. */
-  async consume(queue: string, handler: Handler) {
-    this.handlers.set(queue, handler);
-    await this.conn!.waitForConnect();
-    await this.startConsumer(this.conn!, queue, handler);
-  }
-
-  private async setup(model: ChannelModel) {
-    const ch = await model.createChannel();
-    const retryMs = Number(this.config.get('RETRY_DELAY_MS'));
-    await ch.assertExchange(EVENTS_EXCHANGE, 'topic', { durable: true });
-    await ch.assertExchange(RETRY_EXCHANGE, 'fanout', { durable: true });
-    // Rejected messages go to the retry queue, wait out the TTL, then re-enter the events exchange.
-    await ch.assertQueue(OTA_QUEUE, {
-      durable: true,
-      arguments: { 'x-dead-letter-exchange': RETRY_EXCHANGE },
+  /** Resolves once the broker has acked (acks=all); rejects on any failure. */
+  async publish(type: string, payload: unknown, id: string): Promise<void> {
+    const propertyId = (payload as { propertyId?: string } | null)?.propertyId;
+    await this.send(EVENTS_TOPIC, {
+      key: propertyId ?? null,
+      value: JSON.stringify({ id, type, payload }),
     });
-    await ch.bindQueue(OTA_QUEUE, EVENTS_EXCHANGE, 'stay.*');
-    await ch.assertQueue(`${OTA_QUEUE}.retry`, {
-      durable: true,
-      arguments: {
-        'x-message-ttl': retryMs,
-        'x-dead-letter-exchange': EVENTS_EXCHANGE,
+  }
+
+  /** Health probe: asks the cluster for its topic list. */
+  async ping(): Promise<void> {
+    await this.admin.listTopics();
+  }
+
+  /**
+   * Starts one member of consumer group `group`, reading the main and the retry topic.
+   * The offset is committed only after the handler (or the hand-off to retry/DLQ) succeeded,
+   * so a crash means redelivery, never loss.
+   */
+  async consume(group: string, handler: Handler) {
+    const consumer = this.kafka.consumer({
+      kafkaJS: { groupId: group, fromBeginning: true, autoCommit: true },
+    });
+    this.consumers.push(consumer);
+    await consumer.connect();
+    await consumer.subscribe({ topics: [EVENTS_TOPIC, RETRY_TOPIC] });
+    await consumer.run({
+      eachMessage: async ({ topic, message }) => {
+        // Retries wait out their delay here, which also keeps per-partition order.
+        const wait = notBefore(message.headers) - Date.now();
+        if (topic === RETRY_TOPIC && wait > 0) await sleep(wait);
+        const raw = message.value?.toString() ?? '';
+        try {
+          await handler(JSON.parse(raw) as EventMessage);
+        } catch (e) {
+          await this.fail(message, raw, e as Error, group);
+        }
       },
     });
-    await ch.bindQueue(`${OTA_QUEUE}.retry`, RETRY_EXCHANGE, '');
-    await ch.assertQueue(`${OTA_QUEUE}.dlq`, { durable: true });
-    await ch.close();
-
-    this.pub = await model.createConfirmChannel();
-    for (const [queue, handler] of this.handlers)
-      await this.startConsumer(model, queue, handler);
   }
 
-  private async startConsumer(
-    model: Pick<ChannelModel, 'createConfirmChannel'>,
-    queue: string,
-    handler: Handler,
+  private async fail(
+    message: KafkaJS.Message & { key?: unknown },
+    raw: string,
+    e: Error,
+    group: string,
   ) {
-    const ch = await model.createConfirmChannel();
-    await ch.prefetch(10);
-    await ch.consume(
-      queue,
-      (msg) => msg && void this.onMessage(ch, queue, msg, handler),
+    const attempt = attemptCount(message.headers) + 1;
+    this.logger.warn(
+      `${group} attempt ${attempt}/${MAX_ATTEMPTS} failed: ${e.message}`,
     );
+    const key = message.key?.toString() ?? null;
+    if (attempt < MAX_ATTEMPTS) {
+      const delay = Number(this.config.get('RETRY_DELAY_MS'));
+      return this.send(RETRY_TOPIC, {
+        key,
+        value: raw,
+        headers: {
+          [ATTEMPT_HEADER]: String(attempt),
+          [NOT_BEFORE_HEADER]: String(Date.now() + delay),
+        },
+      });
+    }
+    // Out of attempts: park it (acked) before the offset is committed so it cannot be lost.
+    return this.send(DLQ_TOPIC, {
+      key,
+      value: raw,
+      headers: { [ATTEMPT_HEADER]: String(attempt), 'x-error': e.message },
+    });
   }
 
-  private async onMessage(
-    ch: ConfirmChannel,
-    queue: string,
-    msg: ConsumeMessage,
-    handler: Handler,
-  ) {
-    try {
-      await handler(JSON.parse(msg.content.toString()) as EventMessage);
-      ch.ack(msg);
-    } catch (e) {
-      const attempt = deathCount(msg.properties.headers, queue) + 1;
-      this.logger.warn(
-        `${queue} attempt ${attempt}/${MAX_ATTEMPTS} failed: ${(e as Error).message}`,
-      );
-      if (attempt < MAX_ATTEMPTS) return ch.nack(msg, false, false);
-      // Out of attempts: park it in the DLQ (confirmed) before acking so it cannot be lost.
-      await confirmed((cb) =>
-        ch.sendToQueue(
-          `${queue}.dlq`,
-          msg.content,
-          { persistent: true, headers: { 'x-error': (e as Error).message } },
-          cb,
-        ),
-      );
-      ch.ack(msg);
-    }
+  private send(topic: string, message: KafkaJS.Message) {
+    return this.producer.send({ topic, messages: [message] });
   }
 }

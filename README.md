@@ -17,7 +17,7 @@ flowchart LR
   Client[API client / Swagger] -->|REST + API key| API[NestJS app]
   OTA[Mock OTA] -->|signed webhook| API
   API --> PG[(PostgreSQL)]
-  API -->|outbox publisher| MQ[[RabbitMQ<br/>staysync.events]]
+  API -->|outbox publisher| MQ[[Kafka<br/>staysync.stay-events<br/>key = propertyId]]
   MQ -->|stay.*| Consumer[OTA consumer<br/>same app]
   Consumer -->|push availability| OTA
   Scheduler[iCal poller] -->|fetch .ics| Ext[External iCal URL]
@@ -37,8 +37,6 @@ docker compose up --build
 
 - Swagger UI: <http://localhost:3000/docs> (click **Authorize**, key `dev-api-key`)
 - Health: <http://localhost:3000/health>
-- RabbitMQ UI: <http://localhost:15672> (`guest` / `guest`)
-
 Then, in another terminal, watch the whole story run:
 
 ```bash
@@ -79,7 +77,7 @@ All routes need the `x-api-key` header except `/health`, `/docs`, the iCal expor
 
 - **The database prevents double bookings**, not application code: a PostgreSQL exclusion constraint on a half-open
   date range. [ADR 1](docs/adr/0001-exclusion-constraint.md)
-- **A transactional outbox** feeds RabbitMQ, so an event is never lost and never describes a rolled-back change.
+- **A transactional outbox** feeds Kafka, so an event is never lost and never describes a rolled-back change.
   [ADR 2](docs/adr/0002-transactional-outbox.md)
 - **One `Stay` table** for bookings, owner blocks and imported dates, so a single constraint covers all of them.
   [ADR 3](docs/adr/0003-single-stays-table.md)
@@ -102,7 +100,7 @@ Smaller choices worth knowing:
 | Layer | What | Tooling |
 |---|---|---|
 | Unit | pricing engine (100% branch coverage), availability, iCal export/parse/diff, HMAC, retry counting | Jest |
-| End to end | HTTP → Postgres → RabbitMQ → mock OTA, concurrency, idempotency, retries and DLQ | Jest + Supertest + Testcontainers (Postgres 16, RabbitMQ 3.13) |
+| End to end | HTTP → Postgres → Kafka → mock OTA, concurrency, idempotency, retries and DLQ | Jest + Supertest + Testcontainers (Postgres 16, Kafka 7.7 (KRaft)) |
 
 The e2e suite uses real infrastructure and never mocks the database. Docker must be running.
 
@@ -124,6 +122,6 @@ See [`.env.example`](.env.example). The app validates its environment on startup
 - **Split the worker** (outbox publisher, OTA consumer, iCal poller) out of the API process; partition work by property.
 - **Real OTA APIs** (Airbnb, Booking.com, Expedia) behind the existing channel abstraction.
 - **Per-channel rate limits** and circuit breaking for outbound calls.
-- **Observability with OpenTelemetry**: traces across HTTP → outbox → RabbitMQ → OTA, plus metrics for queue depth and
+- **Observability with OpenTelemetry**: traces across HTTP → outbox → Kafka → OTA, plus metrics for consumer lag and
   DLQ size.
 - Multi-instance safety for iCal sync (advisory lock) and iCal recurrence rules.

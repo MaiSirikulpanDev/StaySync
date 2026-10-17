@@ -2,7 +2,7 @@ import { parseEnv } from './env.schema';
 
 const valid = {
   DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
-  RABBITMQ_URL: 'amqp://guest:guest@localhost:5672',
+  KAFKA_BROKERS: 'localhost:9092',
   API_KEY: 'k',
   OTA_WEBHOOK_SECRET: 's',
 };
