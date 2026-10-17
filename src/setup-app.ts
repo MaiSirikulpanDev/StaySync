@@ -1,9 +1,11 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
+import { httpTracing } from './tracing/http-tracing';
 
 export function configureApp(app: INestApplication) {
   app.useLogger(app.get(Logger));
+  app.use(httpTracing);
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

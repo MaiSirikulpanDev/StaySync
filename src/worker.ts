@@ -1,3 +1,6 @@
+import { startTracing } from './tracing/start';
+
+startTracing('staysync-worker');
 import { NestFactory } from '@nestjs/core';
 import { Logger } from 'nestjs-pino';
 import { WorkerRootModule } from './worker.module';

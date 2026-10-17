@@ -1,3 +1,6 @@
+import { startTracing } from './tracing/start';
+
+startTracing('staysync-api');
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';

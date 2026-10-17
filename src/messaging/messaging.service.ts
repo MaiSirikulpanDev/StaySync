@@ -6,7 +6,14 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { KafkaJS } from '@confluentinc/kafka-javascript';
+import {
+  context,
+  propagation,
+  ROOT_CONTEXT,
+  SpanKind,
+} from '@opentelemetry/api';
 import type { Env } from '../config/env.schema';
+import { inSpan, contextFrom, traceparentOf } from '../tracing/trace';
 import { StayEvent, stayEventSchema, toEnvelope } from '../events/stay-events';
 import {
   ATTEMPT_HEADER,
@@ -29,6 +36,11 @@ const TOPICS = [
   { topic: RETRY_TOPIC, numPartitions: 6 },
   { topic: DLQ_TOPIC, numPartitions: 1 },
 ];
+/** Retry and DLQ copies keep the trace of the original event. */
+const traceHeaders = (headers: Record<string, unknown> | undefined) => {
+  const traceparent = traceparentOf(headers);
+  return traceparent ? { traceparent } : {};
+};
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 @Injectable()
@@ -81,12 +93,24 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     type: string;
     payload: unknown;
     createdAt: Date;
+    traceparent?: string | null;
   }): Promise<void> {
     const event = toEnvelope(row);
-    await this.send(EVENTS_TOPIC, {
-      key: event.propertyId,
-      value: JSON.stringify(event),
-    });
+    // Child of the request that wrote the outbox row; its own context rides in the Kafka headers.
+    await inSpan(
+      'outbox publish',
+      SpanKind.PRODUCER,
+      contextFrom(row.traceparent),
+      async () => {
+        const headers: Record<string, string> = {};
+        propagation.inject(context.active(), headers);
+        await this.send(EVENTS_TOPIC, {
+          key: event.propertyId,
+          value: JSON.stringify(event),
+          headers,
+        });
+      },
+    );
   }
 
   /** Health probe: asks the cluster for its topic list. */
@@ -169,12 +193,24 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
       await this.send(DLQ_TOPIC, {
         key: message.key?.toString() ?? null,
         value: raw,
-        headers: { 'x-error': event.message, [GROUP_HEADER]: group },
+        headers: {
+          'x-error': event.message,
+          [GROUP_HEADER]: group,
+          ...traceHeaders(message.headers),
+        },
       });
       return;
     }
+    const tp = traceparentOf(message.headers);
     try {
-      await handler(event);
+      await inSpan(
+        `${group} process`,
+        SpanKind.CONSUMER,
+        tp
+          ? propagation.extract(ROOT_CONTEXT, { traceparent: tp })
+          : ROOT_CONTEXT,
+        () => handler(event),
+      );
     } catch (e) {
       await this.fail(message, raw, e as Error, group);
     }
@@ -207,6 +243,7 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
         headers: {
           [ATTEMPT_HEADER]: String(attempt),
           [GROUP_HEADER]: group,
+          ...traceHeaders(message.headers),
           [NOT_BEFORE_HEADER]: String(Date.now() + delay),
         },
       });
@@ -218,6 +255,7 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
       headers: {
         [ATTEMPT_HEADER]: String(attempt),
         [GROUP_HEADER]: group,
+        ...traceHeaders(message.headers),
         'x-error': e.message,
       },
     });

@@ -108,6 +108,7 @@ model OutboxEvent {
   createdAt   DateTime  @default(now())
   publishedAt DateTime?
   attempts    Int       @default(0)
+  traceparent String? // W3C trace context of the request that wrote the event
 }
 
 // Idempotency ledger for inbound OTA webhooks.

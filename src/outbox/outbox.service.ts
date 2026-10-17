@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { currentTraceparent } from '../tracing/trace';
 
 @Injectable()
 export class OutboxService {
@@ -9,6 +10,8 @@ export class OutboxService {
     type: string,
     payload: Prisma.InputJsonValue,
   ) {
-    return tx.outboxEvent.create({ data: { type, payload } });
+    return tx.outboxEvent.create({
+      data: { type, payload, traceparent: currentTraceparent() },
+    });
   }
 }
