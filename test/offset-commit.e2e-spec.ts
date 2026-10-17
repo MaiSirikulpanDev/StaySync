@@ -64,4 +64,19 @@ describe('consumer offset commit', () => {
     // Well inside the 5s auto-commit interval: the commit is explicit, not on a timer.
     await waitFor(async () => (await committed(group)) > 0, 2500);
   });
+
+  it('reports how far a group is behind while its handler is busy, and zero once it caught up', async () => {
+    const group = `lag-test-${randomUUID()}`;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let started = false;
+    await messaging.consume(group, async () => {
+      started = true;
+      await gate;
+    });
+    await waitFor(() => started);
+    expect(await messaging.lag(group)).toBeGreaterThan(0);
+    release();
+    await waitFor(async () => (await messaging.lag(group)) === 0, 30000);
+  });
 });

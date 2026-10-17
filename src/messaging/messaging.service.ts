@@ -94,6 +94,30 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     await this.admin.listTopics();
   }
 
+  /** Messages the group has not committed yet, over the main and retry topics. */
+  async lag(group: string): Promise<number> {
+    const topics = [EVENTS_TOPIC, RETRY_TOPIC];
+    const committed = await this.admin.fetchOffsets({ groupId: group, topics });
+    let lag = 0;
+    for (const topic of topics) {
+      const done = committed.find((c) => c.topic === topic)?.partitions ?? [];
+      for (const end of await this.admin.fetchTopicOffsets(topic)) {
+        const c = Number(
+          done.find((p) => p.partition === end.partition)?.offset ?? -1,
+        );
+        // no commit yet: the group starts from the earliest offset
+        lag += Number(end.high) - (c >= 0 ? c : Number(end.low));
+      }
+    }
+    return lag;
+  }
+
+  /** Messages currently parked in the DLQ topic. */
+  async dlqDepth(): Promise<number> {
+    const ends = await this.admin.fetchTopicOffsets(DLQ_TOPIC);
+    return ends.reduce((n, e) => n + Number(e.high) - Number(e.low), 0);
+  }
+
   /**
    * Starts one member of consumer group `group`, reading the main and the retry topic.
    * The offset is committed only after the handler (or the hand-off to retry/DLQ) succeeded,
