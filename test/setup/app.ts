@@ -2,12 +2,13 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Clock } from '../../src/common/clock';
 import { AppModule } from '../../src/app.module';
+import { WorkerModule } from '../../src/worker.module';
 import { configureApp } from '../../src/setup-app';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
 export async function createTestApp(): Promise<INestApplication> {
   const mod = await Test.createTestingModule({
-    imports: [AppModule],
+    imports: [AppModule, WorkerModule],
   })
     .overrideProvider(Clock)
     .useValue({ today: () => '2026-10-05' })

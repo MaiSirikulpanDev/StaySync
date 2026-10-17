@@ -5,11 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  OnModuleDestroy,
-  OnModuleInit,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { SchedulerRegistry } from '@nestjs/schedule';
 import {
   Channel,
   Prisma,
@@ -17,10 +13,8 @@ import {
   StaySource,
   StayStatus,
 } from '@prisma/client';
-import { CronJob } from 'cron';
 import { isOverlapError } from '../../common/all-exceptions.filter';
 import { toDay } from '../../common/dates';
-import type { Env } from '../../config/env.schema';
 import { OutboxService } from '../../outbox/outbox.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { eventPayload } from '../../stays/stay-event';
@@ -34,32 +28,14 @@ export interface SyncSummary {
   errors: number;
 }
 
-const CRON_NAME = 'ical-poll';
-
 @Injectable()
-export class IcalSyncService implements OnModuleInit, OnModuleDestroy {
+export class IcalSyncService {
   private readonly logger = new Logger(IcalSyncService.name);
-  private readonly syncing = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxService,
-    private readonly config: ConfigService<Env, true>,
-    private readonly registry: SchedulerRegistry,
   ) {}
-
-  onModuleInit() {
-    const job = CronJob.from({
-      cronTime: String(this.config.get('ICAL_POLL_CRON')),
-      onTick: () => void this.syncAll(),
-      start: true,
-    });
-    this.registry.addCronJob(CRON_NAME, job);
-  }
-
-  onModuleDestroy() {
-    this.registry.deleteCronJob(CRON_NAME);
-  }
 
   async syncAll() {
     const channels = await this.prisma.channel.findMany({
@@ -87,113 +63,121 @@ export class IcalSyncService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Fetch, parse, diff, apply. Each change is its own transaction so one clash cannot abort the rest.
-   * ponytail: the in-process lock assumes a single instance; use an advisory lock when scaling out.
+   * One sync per channel across all processes: a Postgres advisory lock, held by an open
+   * transaction on its own connection (released on commit, rollback or a crash) while the work
+   * itself uses the normal pool.
    */
-  private async sync(channel: Channel): Promise<SyncSummary> {
-    if (this.syncing.has(channel.id)) {
-      throw new ConflictException({
-        code: 'SYNC_IN_PROGRESS',
-        message: 'Sync already running',
-      });
-    }
-    this.syncing.add(channel.id);
-    try {
-      const { events, errors } = parseIcs(await this.fetchFeed(channel));
-      const summary: SyncSummary = {
-        created: 0,
-        updated: 0,
-        cancelled: 0,
-        conflicts: 0,
-        errors: errors.length,
-      };
-
-      for (const e of errors) {
-        await this.raise(
-          channel.id,
-          'PARSE_ERROR',
-          `${e.uid ?? ''}|${e.reason}`,
-          { uid: e.uid ?? null, reason: e.reason },
-        );
-      }
-
-      // Externals are namespaced per channel so two feeds never cancel each other's events.
-      const prefix = `${channel.id}:`;
-      const rows = await this.prisma.stay.findMany({
-        where: {
-          propertyId: channel.propertyId,
-          source: StaySource.ICAL,
-          externalId: { startsWith: prefix },
-        },
-      });
-      const existing: LocalStay[] = rows.map((s) => ({
-        id: s.id,
-        uid: s.externalId!.slice(prefix.length),
-        checkIn: toDay(s.checkIn),
-        checkOut: toDay(s.checkOut),
-        status: s.status,
-      }));
-      const diff = diffStays(events, existing);
-
-      // Cancel first so dates freed by one event are available to another.
-      for (const c of diff.toCancel) {
-        await this.prisma.$transaction(async (tx) => {
-          const s = await tx.stay.update({
-            where: { id: c.id },
-            data: { status: StayStatus.CANCELLED },
-          });
-          await this.outbox.add(tx, 'stay.cancelled', eventPayload(s));
-        });
-        summary.cancelled++;
-      }
-
-      const writes = [
-        ...diff.toUpdate.map((u) => ({ ...u, op: 'update' as const })),
-        ...diff.toCreate.map((u) => ({ ...u, op: 'create' as const })),
-      ];
-      for (const w of writes) {
-        const dates = {
-          checkIn: new Date(w.checkIn),
-          checkOut: new Date(w.checkOut),
-        };
-        try {
-          await this.prisma.$transaction(async (tx) => {
-            const s =
-              w.op === 'update'
-                ? await tx.stay.update({
-                    where: { id: w.id },
-                    data: { ...dates, status: StayStatus.CONFIRMED },
-                  })
-                : await tx.stay.create({
-                    data: {
-                      ...dates,
-                      propertyId: channel.propertyId,
-                      kind: StayKind.BLOCK,
-                      source: StaySource.ICAL,
-                      externalId: prefix + w.uid,
-                    },
-                  });
-            await this.outbox.add(tx, 'stay.created', eventPayload(s));
-          });
-          summary[w.op === 'update' ? 'updated' : 'created']++;
-        } catch (e) {
-          if (!isOverlapError(e)) throw e;
-          summary.conflicts++;
-          await this.raise(channel.id, 'CONFLICT', w.uid, {
-            uid: w.uid,
-            checkIn: w.checkIn,
-            checkOut: w.checkOut,
+  private sync(channel: Channel): Promise<SyncSummary> {
+    return this.prisma.$transaction(
+      async (lock) => {
+        const [{ locked }] = await lock.$queryRaw<{ locked: boolean }[]>`
+          SELECT pg_try_advisory_xact_lock(hashtextextended(${channel.id}, 0)) AS locked`;
+        if (!locked) {
+          throw new ConflictException({
+            code: 'SYNC_IN_PROGRESS',
+            message: 'Sync already running',
           });
         }
-      }
+        return this.syncLocked(channel);
+      },
+      { timeout: 120_000 },
+    );
+  }
 
-      await this.prisma.channel.update({
-        where: { id: channel.id },
-        data: { lastSyncedAt: new Date(), lastSyncError: null },
-      });
-      return summary;
-    } finally {
-      this.syncing.delete(channel.id);
+  private async syncLocked(channel: Channel): Promise<SyncSummary> {
+    const { events, errors } = parseIcs(await this.fetchFeed(channel));
+    const summary: SyncSummary = {
+      created: 0,
+      updated: 0,
+      cancelled: 0,
+      conflicts: 0,
+      errors: errors.length,
+    };
+
+    for (const e of errors) {
+      await this.raise(
+        channel.id,
+        'PARSE_ERROR',
+        `${e.uid ?? ''}|${e.reason}`,
+        { uid: e.uid ?? null, reason: e.reason },
+      );
     }
+
+    // Externals are namespaced per channel so two feeds never cancel each other's events.
+    const prefix = `${channel.id}:`;
+    const rows = await this.prisma.stay.findMany({
+      where: {
+        propertyId: channel.propertyId,
+        source: StaySource.ICAL,
+        externalId: { startsWith: prefix },
+      },
+    });
+    const existing: LocalStay[] = rows.map((s) => ({
+      id: s.id,
+      uid: s.externalId!.slice(prefix.length),
+      checkIn: toDay(s.checkIn),
+      checkOut: toDay(s.checkOut),
+      status: s.status,
+    }));
+    const diff = diffStays(events, existing);
+
+    // Cancel first so dates freed by one event are available to another.
+    for (const c of diff.toCancel) {
+      await this.prisma.$transaction(async (tx) => {
+        const s = await tx.stay.update({
+          where: { id: c.id },
+          data: { status: StayStatus.CANCELLED },
+        });
+        await this.outbox.add(tx, 'stay.cancelled', eventPayload(s));
+      });
+      summary.cancelled++;
+    }
+
+    const writes = [
+      ...diff.toUpdate.map((u) => ({ ...u, op: 'update' as const })),
+      ...diff.toCreate.map((u) => ({ ...u, op: 'create' as const })),
+    ];
+    for (const w of writes) {
+      const dates = {
+        checkIn: new Date(w.checkIn),
+        checkOut: new Date(w.checkOut),
+      };
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          const s =
+            w.op === 'update'
+              ? await tx.stay.update({
+                  where: { id: w.id },
+                  data: { ...dates, status: StayStatus.CONFIRMED },
+                })
+              : await tx.stay.create({
+                  data: {
+                    ...dates,
+                    propertyId: channel.propertyId,
+                    kind: StayKind.BLOCK,
+                    source: StaySource.ICAL,
+                    externalId: prefix + w.uid,
+                  },
+                });
+          await this.outbox.add(tx, 'stay.created', eventPayload(s));
+        });
+        summary[w.op === 'update' ? 'updated' : 'created']++;
+      } catch (e) {
+        if (!isOverlapError(e)) throw e;
+        summary.conflicts++;
+        await this.raise(channel.id, 'CONFLICT', w.uid, {
+          uid: w.uid,
+          checkIn: w.checkIn,
+          checkOut: w.checkOut,
+        });
+      }
+    }
+
+    await this.prisma.channel.update({
+      where: { id: channel.id },
+      data: { lastSyncedAt: new Date(), lastSyncError: null },
+    });
+    return summary;
   }
 
   private async fetchFeed(channel: Channel): Promise<string> {

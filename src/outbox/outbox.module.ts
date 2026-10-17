@@ -1,10 +1,6 @@
 import { Global, Module } from '@nestjs/common';
-import { OutboxPublisher } from './outbox.publisher';
 import { OutboxService } from './outbox.service';
 
 @Global()
-@Module({
-  providers: [OutboxService, OutboxPublisher],
-  exports: [OutboxService, OutboxPublisher],
-})
+@Module({ providers: [OutboxService], exports: [OutboxService] })
 export class OutboxModule {}

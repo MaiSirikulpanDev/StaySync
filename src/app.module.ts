@@ -1,40 +1,21 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
-import { LoggerModule } from 'nestjs-pino';
+import { CoreModule } from './core.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { ApiKeyGuard } from './common/api-key.guard';
-import { parseEnv } from './config/env.schema';
 import { HealthModule } from './health/health.module';
 import { ChannelsModule } from './channels/channels.module';
 import { IcalModule } from './channels/ical/ical.module';
 import { MockOtaModule } from './channels/mock-ota/mock-ota.module';
-import { MessagingModule } from './messaging/messaging.module';
 import { OccupancyModule } from './occupancy/occupancy.module';
-import { OutboxModule } from './outbox/outbox.module';
 import { SyncIssuesModule } from './sync-issues/sync-issues.module';
 import { PricingModule } from './pricing/pricing.module';
 import { PropertiesModule } from './properties/properties.module';
-import { PrismaModule } from './prisma/prisma.module';
 import { StaysModule } from './stays/stays.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, validate: parseEnv }),
-    LoggerModule.forRoot({
-      pinoHttp: {
-        genReqId: (req) =>
-          (req.headers['x-request-id'] as string) ?? crypto.randomUUID(),
-        level: process.env.NODE_ENV === 'test' ? 'silent' : 'info',
-        transport:
-          process.env.NODE_ENV === 'development'
-            ? { target: 'pino-pretty' }
-            : undefined,
-      },
-    }),
-    PrismaModule,
-    MessagingModule,
-    OutboxModule,
+    CoreModule,
     HealthModule,
     PropertiesModule,
     PricingModule,

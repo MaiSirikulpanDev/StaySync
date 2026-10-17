@@ -10,6 +10,7 @@ async function bootstrap() {
     rawBody: true,
   });
   configureApp(app);
+  app.enableShutdownHooks();
   await app.listen(
     app.get<ConfigService<Env, true>>(ConfigService).get('PORT'),
   );
