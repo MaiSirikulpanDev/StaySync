@@ -1,11 +1,8 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
+import { StayEvent } from '../../events/stay-events';
 import { Clock } from '../../common/clock';
 import { addDays } from '../../common/dates';
-import {
-  EventMessage,
-  MessagingService,
-  OTA_GROUP,
-} from '../../messaging/messaging.service';
+import { MessagingService, OTA_GROUP } from '../../messaging/messaging.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StaysService } from '../../stays/stays.service';
 import { OtaClient } from './ota.client';
@@ -30,9 +27,9 @@ export class OtaConsumer implements OnModuleInit {
    * Rebuilds the whole next-365-days calendar from the database rather than applying a delta, so
    * duplicate deliveries and reordered events are harmless: the last push always reflects current state.
    */
-  async handle({ payload }: EventMessage) {
+  async handle({ payload }: StayEvent) {
     if (payload.source === 'MOCK_OTA') return; // came from the OTA: don't echo it back
-    const propertyId = payload.propertyId as string;
+    const propertyId = payload.propertyId;
     const channels = await this.prisma.channel.findMany({
       where: { propertyId, type: 'MOCK_OTA', active: true },
     });

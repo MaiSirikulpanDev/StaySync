@@ -60,7 +60,7 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
         let published = 0;
         for (const r of rows) {
           try {
-            await this.messaging.publish(r.type, r.payload, r.id);
+            await this.messaging.publish(r);
           } catch (e) {
             this.logger.warn(
               `publish ${r.type} ${r.id} failed: ${(e as Error).message}`,

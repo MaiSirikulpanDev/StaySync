@@ -11,7 +11,7 @@ const kafka = () =>
 export async function spyOnEvents(topic = EVENTS_TOPIC) {
   const messages: {
     key: string | null;
-    body: { id: string; type: string; payload: any };
+    body: { eventId: string; type: string; payload: any };
   }[] = [];
   const consumer = kafka().consumer({
     kafkaJS: { groupId: `spy-${randomUUID()}`, fromBeginning: true },
@@ -39,5 +39,16 @@ export async function dlqCount() {
     return offsets.reduce((n, o) => n + Number(o.high) - Number(o.low), 0);
   } finally {
     await admin.disconnect();
+  }
+}
+
+/** Writes a raw string to a topic, bypassing the app's own producer and its validation. */
+export async function produceRaw(topic: string, key: string, value: string) {
+  const producer = kafka().producer();
+  await producer.connect();
+  try {
+    await producer.send({ topic, messages: [{ key, value }] });
+  } finally {
+    await producer.disconnect();
   }
 }

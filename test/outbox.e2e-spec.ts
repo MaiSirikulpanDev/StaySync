@@ -1,4 +1,5 @@
 import { INestApplication } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { MessagingService } from '../src/messaging/messaging.service';
 import { OutboxPublisher } from '../src/outbox/outbox.publisher';
@@ -15,7 +16,7 @@ describe('transactional outbox', () => {
   // The topic is never reset, so only count events whose outbox row belongs to this test.
   const received = async () => {
     const ids = new Set((await events()).map((e) => e.id));
-    return spy.messages.filter((m) => ids.has(m.body.id));
+    return spy.messages.filter((m) => ids.has(m.body.eventId));
   };
   const http = () => request(app.getHttpServer());
   const book = (checkIn: string, checkOut: string) =>
@@ -116,7 +117,14 @@ describe('transactional outbox', () => {
     await prisma.outboxEvent.createMany({
       data: Array.from({ length: 30 }, () => ({
         type: 'stay.created',
-        payload: {},
+        payload: {
+          stayId: randomUUID(),
+          propertyId: id,
+          source: 'DIRECT',
+          kind: 'BOOKING',
+          checkIn: '2026-10-05',
+          checkOut: '2026-10-08',
+        },
       })),
     });
     const publisher = app.get(OutboxPublisher);
@@ -134,6 +142,6 @@ describe('transactional outbox', () => {
     await new Promise((r) => setTimeout(r, 500));
     const all = await received();
     expect(all).toHaveLength(30);
-    expect(new Set(all.map((r) => r.body.id)).size).toBe(30);
+    expect(new Set(all.map((r) => r.body.eventId)).size).toBe(30);
   });
 });

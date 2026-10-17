@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { KafkaJS } from '@confluentinc/kafka-javascript';
 import type { Env } from '../config/env.schema';
+import { StayEvent, stayEventSchema, toEnvelope } from '../events/stay-events';
 import {
   ATTEMPT_HEADER,
   attemptCount,
@@ -20,12 +21,7 @@ export const DLQ_TOPIC = `${EVENTS_TOPIC}.dlq`;
 export const OTA_GROUP = 'ota-sync';
 export const MAX_ATTEMPTS = 5;
 
-export interface EventMessage<P = Record<string, unknown>> {
-  id: string;
-  type: string;
-  payload: P;
-}
-type Handler = (event: EventMessage) => Promise<void>;
+type Handler = (event: StayEvent) => Promise<void>;
 
 const TOPICS = [
   { topic: EVENTS_TOPIC, numPartitions: 6 },
@@ -69,12 +65,17 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     await this.admin.disconnect();
   }
 
-  /** Resolves once the broker has acked (acks=all); rejects on any failure. */
-  async publish(type: string, payload: unknown, id: string): Promise<void> {
-    const propertyId = (payload as { propertyId?: string } | null)?.propertyId;
+  /** Validates the envelope, then resolves once the broker has acked (acks=all). */
+  async publish(row: {
+    id: string;
+    type: string;
+    payload: unknown;
+    createdAt: Date;
+  }): Promise<void> {
+    const event = toEnvelope(row);
     await this.send(EVENTS_TOPIC, {
-      key: propertyId ?? null,
-      value: JSON.stringify({ id, type, payload }),
+      key: event.propertyId,
+      value: JSON.stringify(event),
     });
   }
 
@@ -101,13 +102,32 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
         const wait = notBefore(message.headers) - Date.now();
         if (topic === RETRY_TOPIC && wait > 0) await sleep(wait);
         const raw = message.value?.toString() ?? '';
+        const event = this.decode(raw);
+        if (event instanceof Error) {
+          // Poison message: retrying cannot fix it, so park it and move on.
+          this.logger.warn(`${group} invalid message: ${event.message}`);
+          await this.send(DLQ_TOPIC, {
+            key: message.key?.toString() ?? null,
+            value: raw,
+            headers: { 'x-error': event.message },
+          });
+          return;
+        }
         try {
-          await handler(JSON.parse(raw) as EventMessage);
+          await handler(event);
         } catch (e) {
           await this.fail(message, raw, e as Error, group);
         }
       },
     });
+  }
+
+  private decode(raw: string): StayEvent | Error {
+    try {
+      return stayEventSchema.parse(JSON.parse(raw));
+    } catch (e) {
+      return e instanceof Error ? e : new Error(String(e));
+    }
   }
 
   private async fail(

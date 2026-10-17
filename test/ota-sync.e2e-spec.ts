@@ -94,7 +94,14 @@ describe('OTA sync (outbox -> Kafka -> consumer -> mock OTA)', () => {
     await prisma.outboxEvent.create({
       data: {
         type: 'stay.created',
-        payload: { stayId: echo.id, propertyId: id, source: 'MOCK_OTA' },
+        payload: {
+          stayId: echo.id,
+          propertyId: id,
+          source: 'MOCK_OTA',
+          kind: 'BOOKING',
+          checkIn: '2026-11-01',
+          checkOut: '2026-11-03',
+        },
       },
     });
     await book('2026-10-08', '2026-10-10'); // control: a direct stay does push
