@@ -8,6 +8,7 @@ const payload = z.object({
   kind: z.enum(['BOOKING', 'BLOCK']),
   checkIn: z.iso.date(),
   checkOut: z.iso.date(),
+  totalCents: z.number().int().nullish(), // revenue for the occupancy read model
 });
 
 const envelope = <T extends string>(type: T) =>

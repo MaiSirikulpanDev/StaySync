@@ -20,6 +20,7 @@ export const RETRY_TOPIC = `${EVENTS_TOPIC}.retry`;
 export const DLQ_TOPIC = `${EVENTS_TOPIC}.dlq`;
 export const OTA_GROUP = 'ota-sync';
 export const MAX_ATTEMPTS = 5;
+const GROUP_HEADER = 'x-group';
 
 type Handler = (event: StayEvent) => Promise<void>;
 
@@ -54,8 +55,17 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     await this.admin.connect();
-    // Idempotent: existing topics are left alone.
-    await this.admin.createTopics({ topics: TOPICS });
+    // Idempotent: existing topics are left alone. Retried because a fresh broker (or a topic
+    // created a moment ago by another instance) can briefly answer with a transient error.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.admin.createTopics({ topics: TOPICS });
+        break;
+      } catch (e) {
+        if (attempt >= 5) throw e;
+        await sleep(500);
+      }
+    }
     await this.producer.connect();
   }
 
@@ -99,6 +109,12 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     await consumer.run({
       eachMessage: async ({ topic, message }) => {
         // Retries wait out their delay here, which also keeps per-partition order.
+        // Retry/DLQ topics are shared; a retry is only for the group that failed.
+        if (
+          topic === RETRY_TOPIC &&
+          message.headers?.[GROUP_HEADER]?.toString() !== group
+        )
+          return;
         const wait = notBefore(message.headers) - Date.now();
         if (topic === RETRY_TOPIC && wait > 0) await sleep(wait);
         const raw = message.value?.toString() ?? '';
@@ -109,7 +125,7 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
           await this.send(DLQ_TOPIC, {
             key: message.key?.toString() ?? null,
             value: raw,
-            headers: { 'x-error': event.message },
+            headers: { 'x-error': event.message, [GROUP_HEADER]: group },
           });
           return;
         }
@@ -148,6 +164,7 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
         value: raw,
         headers: {
           [ATTEMPT_HEADER]: String(attempt),
+          [GROUP_HEADER]: group,
           [NOT_BEFORE_HEADER]: String(Date.now() + delay),
         },
       });
@@ -156,7 +173,11 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     return this.send(DLQ_TOPIC, {
       key,
       value: raw,
-      headers: { [ATTEMPT_HEADER]: String(attempt), 'x-error': e.message },
+      headers: {
+        [ATTEMPT_HEADER]: String(attempt),
+        [GROUP_HEADER]: group,
+        'x-error': e.message,
+      },
     });
   }
 

@@ -80,7 +80,8 @@ describe('event stream', () => {
       JSON.stringify({ version: 2, type: 'stay.created' }),
     );
     await produceRaw(EVENTS_TOPIC, id, 'not json at all');
-    await waitFor(async () => (await dlqCount()) === before + 3, 20000);
+    // 3 bad messages x 2 consumer groups (ota-sync, occupancy-projection)
+    await waitFor(async () => (await dlqCount()) === before + 6, 20000);
 
     await http()
       .post(`/properties/${id}/stays`)
@@ -89,6 +90,6 @@ describe('event stream', () => {
       .expect(201);
     await waitFor(() => ota.calls.length >= 1, 10000);
     expect(ota.calls[0].status).toBe(200);
-    expect(await dlqCount()).toBe(before + 3); // the invalid ones were not retried
+    expect(await dlqCount()).toBe(before + 6); // not retried; each of the 2 consumer groups parks its own copy
   });
 });

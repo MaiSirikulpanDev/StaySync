@@ -10,6 +10,7 @@ import { ChannelsModule } from './channels/channels.module';
 import { IcalModule } from './channels/ical/ical.module';
 import { MockOtaModule } from './channels/mock-ota/mock-ota.module';
 import { MessagingModule } from './messaging/messaging.module';
+import { OccupancyModule } from './occupancy/occupancy.module';
 import { OutboxModule } from './outbox/outbox.module';
 import { SyncIssuesModule } from './sync-issues/sync-issues.module';
 import { PricingModule } from './pricing/pricing.module';
@@ -42,6 +43,7 @@ import { StaysModule } from './stays/stays.module';
     ChannelsModule,
     IcalModule,
     SyncIssuesModule,
+    OccupancyModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ApiKeyGuard },

@@ -9,4 +9,5 @@ export const eventPayload = (s: Stay) => ({
   kind: s.kind,
   checkIn: toDay(s.checkIn),
   checkOut: toDay(s.checkOut),
+  totalCents: s.totalCents,
 });

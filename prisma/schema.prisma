@@ -127,3 +127,23 @@ model SyncIssue {
 
   @@index([channelId])
 }
+
+// Inbox for idempotent consumers: a duplicate delivery hits the primary key and is skipped.
+model ProcessedEvent {
+  consumerGroup String
+  eventId       String   @db.Uuid
+  processedAt   DateTime @default(now())
+
+  @@id([consumerGroup, eventId])
+}
+
+// Read model owned by the occupancy-projection consumer. No FK: it is rebuilt from the stream.
+model PropertyOccupancyDaily {
+  propertyId   String   @db.Uuid
+  date         DateTime @db.Date
+  bookedNights Int
+  revenueCents Int
+  lastEventId  String   @db.Uuid
+
+  @@id([propertyId, date])
+}
