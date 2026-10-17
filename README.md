@@ -8,7 +8,7 @@ the OTA even when it is down, inbound webhooks are verified and idempotent, and 
 Booking.com.
 
 It is a portfolio project, so it deliberately stays small: no frontend (Swagger UI is the demo surface), no user
-accounts (one API key), one deployable app plus a tiny mock OTA.
+accounts (one API key), one codebase that runs as two processes (`api` and `worker`) plus a tiny mock OTA.
 
 ## Architecture
 
@@ -18,14 +18,14 @@ flowchart LR
   OTA[Mock OTA] -->|signed webhook| API
   API --> PG[(PostgreSQL)]
   API -->|outbox publisher| MQ[[Kafka<br/>staysync.stay-events<br/>key = propertyId]]
-  MQ -->|stay.*| Consumer[OTA consumer<br/>same app]
+  MQ -->|stay.*| Consumer[OTA consumer<br/>worker process]
   Consumer -->|push availability| OTA
   Scheduler[iCal poller] -->|fetch .ics| Ext[External iCal URL]
   Scheduler --> PG
   Airbnb[Airbnb / Booking.com] -->|GET calendar.ics| API
 ```
 
-One deployable app. The consumer and scheduler are separate Nest modules, so they could become workers later.
+One codebase, two entrypoints from the same image: `node dist/main` (HTTP only) and `node dist/worker` (outbox publisher, the `ota-sync` and `occupancy-projection` consumers, iCal poller). `docker compose up` runs the worker with 2 replicas that share the Kafka partitions; the iCal sync takes a per-channel Postgres advisory lock so replicas never sync the same feed twice.
 
 ## Quick start
 

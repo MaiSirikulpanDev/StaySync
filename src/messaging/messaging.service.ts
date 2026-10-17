@@ -101,41 +101,59 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
    */
   async consume(group: string, handler: Handler) {
     const consumer = this.kafka.consumer({
-      kafkaJS: { groupId: group, fromBeginning: true, autoCommit: true },
+      kafkaJS: { groupId: group, fromBeginning: true, autoCommit: false },
     });
     this.consumers.push(consumer);
     await consumer.connect();
     await consumer.subscribe({ topics: [EVENTS_TOPIC, RETRY_TOPIC] });
     await consumer.run({
-      eachMessage: async ({ topic, message }) => {
-        // Retries wait out their delay here, which also keeps per-partition order.
-        // Retry/DLQ topics are shared; a retry is only for the group that failed.
-        if (
-          topic === RETRY_TOPIC &&
-          message.headers?.[GROUP_HEADER]?.toString() !== group
-        )
-          return;
-        const wait = notBefore(message.headers) - Date.now();
-        if (topic === RETRY_TOPIC && wait > 0) await sleep(wait);
-        const raw = message.value?.toString() ?? '';
-        const event = this.decode(raw);
-        if (event instanceof Error) {
-          // Poison message: retrying cannot fix it, so park it and move on.
-          this.logger.warn(`${group} invalid message: ${event.message}`);
-          await this.send(DLQ_TOPIC, {
-            key: message.key?.toString() ?? null,
-            value: raw,
-            headers: { 'x-error': event.message, [GROUP_HEADER]: group },
-          });
-          return;
-        }
-        try {
-          await handler(event);
-        } catch (e) {
-          await this.fail(message, raw, e as Error, group);
-        }
+      eachMessage: async ({ topic, partition, message }) => {
+        await this.handle(group, handler, topic, message);
+        // Only now, after the side effect (or the hand-off to retry/DLQ): a crash before this
+        // line means redelivery, never loss.
+        await consumer.commitOffsets([
+          {
+            topic,
+            partition,
+            offset: (BigInt(message.offset) + 1n).toString(),
+          },
+        ]);
       },
     });
+  }
+
+  private async handle(
+    group: string,
+    handler: Handler,
+    topic: string,
+    message: KafkaJS.Message & { offset: string },
+  ) {
+    // Retry/DLQ topics are shared; a retry is only for the group that failed.
+    if (
+      topic === RETRY_TOPIC &&
+      message.headers?.[GROUP_HEADER]?.toString() !== group
+    )
+      return;
+    // Retries wait out their delay here, which also keeps per-partition order.
+    const wait = notBefore(message.headers) - Date.now();
+    if (topic === RETRY_TOPIC && wait > 0) await sleep(wait);
+    const raw = message.value?.toString() ?? '';
+    const event = this.decode(raw);
+    if (event instanceof Error) {
+      // Poison message: retrying cannot fix it, so park it and move on.
+      this.logger.warn(`${group} invalid message: ${event.message}`);
+      await this.send(DLQ_TOPIC, {
+        key: message.key?.toString() ?? null,
+        value: raw,
+        headers: { 'x-error': event.message, [GROUP_HEADER]: group },
+      });
+      return;
+    }
+    try {
+      await handler(event);
+    } catch (e) {
+      await this.fail(message, raw, e as Error, group);
+    }
   }
 
   private decode(raw: string): StayEvent | Error {

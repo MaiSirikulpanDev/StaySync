@@ -5,7 +5,7 @@
 >
 > **For Claude:** this file is the source of truth. Build it milestone by milestone (section 9, then section 12). Don't add scope or dependencies that this file doesn't list unless you write down why in `docs/adr/`. Each milestone is done only when its acceptance criteria pass and `npm test` is green.
 >
-> **Status:** Phase 1 (M0–M6, RabbitMQ) is done. Phase 2 (M7–M12, Kafka) is in progress (M7–M9 done); the Phase 1 code is kept on branch `v1-rabbitmq`; where section 12 disagrees with an earlier section, section 12 wins.
+> **Status:** Phase 1 (M0–M6, RabbitMQ) is done. Phase 2 (M7–M12, Kafka) is in progress (M7–M10 done); the Phase 1 code is kept on branch `v1-rabbitmq`; where section 12 disagrees with an earlier section, section 12 wins.
 
 ---
 

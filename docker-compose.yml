@@ -39,20 +39,35 @@ services:
       target: mock-ota
     environment:
       PORT: '4000'
-      APP_URL: http://app:3000
+      APP_URL: http://api:3000
       OTA_WEBHOOK_SECRET: dev-webhook-secret
     ports: ['4000:4000']
 
-  app:
+  api:
     build: .
     ports: ['3000:3000']
-    environment:
+    environment: &app-env
       DATABASE_URL: postgresql://staysync:staysync@postgres:5432/staysync
       KAFKA_BROKERS: kafka:19092
       API_KEY: dev-api-key
       OTA_BASE_URL: http://mock-ota:4000
       OTA_WEBHOOK_SECRET: dev-webhook-secret
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      retries: 30
     depends_on:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }
       mock-ota: { condition: service_started }
+
+  # Same image, different command: outbox publisher, both consumer groups, iCal poller.
+  # Two replicas share the topic partitions; the api runs the migrations first.
+  worker:
+    build: .
+    command: ['node', 'dist/worker']
+    environment: *app-env
+    deploy:
+      replicas: 2
+    depends_on:
+      api: { condition: service_healthy }
