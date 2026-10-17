@@ -14,15 +14,20 @@ accounts (one API key), one codebase that runs as two processes (`api` and `work
 
 ```mermaid
 flowchart LR
-  Client[API client / Swagger] -->|REST + API key| API[NestJS app]
+  Client[API client / Swagger] -->|REST + API key| API[api process]
   OTA[Mock OTA] -->|signed webhook| API
   API --> PG[(PostgreSQL)]
-  API -->|outbox publisher| MQ[[Kafka<br/>staysync.stay-events<br/>key = propertyId]]
-  MQ -->|stay.*| Consumer[OTA consumer<br/>worker process]
-  Consumer -->|push availability| OTA
-  Scheduler[iCal poller] -->|fetch .ics| Ext[External iCal URL]
-  Scheduler --> PG
+  PG -->|outbox publisher| K[[Kafka<br/>staysync.stay-events<br/>key = propertyId]]
+  K -->|group ota-sync| W[worker replicas x2]
+  K -->|group occupancy-projection| W
+  W -->|push availability| OTA
+  W -->|projection + inbox| PG
+  K -.->|failed| R[[stay-events.retry]] -.-> W
+  R -.->|after 5 tries| D[[stay-events.dlq]]
+  Scheduler[iCal poller in worker] -->|fetch .ics| Ext[External iCal URL]
   Airbnb[Airbnb / Booking.com] -->|GET calendar.ics| API
+  API -.->|OTLP traces| J[Jaeger]
+  W -.->|OTLP traces| J
 ```
 
 One codebase, two entrypoints from the same image: `node dist/main` (HTTP only) and `node dist/worker` (outbox publisher, the `ota-sync` and `occupancy-projection` consumers, iCal poller). `docker compose up` runs the worker with 2 replicas that share the Kafka partitions; the iCal sync takes a per-channel Postgres advisory lock so replicas never sync the same feed twice.
@@ -36,7 +41,9 @@ docker compose up --build
 ```
 
 - Swagger UI: <http://localhost:3000/docs> (click **Authorize**, key `dev-api-key`)
-- Health: <http://localhost:3000/health>
+- Health: <http://localhost:3000/health> (database, Kafka, consumer lag per group, DLQ depth)
+- Traces: <http://localhost:16686> (Jaeger)
+
 Then, in another terminal, watch the whole story run:
 
 ```bash
@@ -45,7 +52,7 @@ Then, in another terminal, watch the whole story run:
 
 It creates a property and a channel, quotes and books a stay, attempts a double booking (409 from the database),
 shows the booking arrive at the mock OTA, receives a signed OTA booking, records an overbooking as a sync issue, and
-prints the iCal feed.
+kills one of the two workers and shows the next booking still reaches the OTA, and prints the iCal feed.
 
 Optional demo data (two properties, rules, a demo channel, a few stays):
 
@@ -83,6 +90,10 @@ All routes need the `x-api-key` header except `/health`, `/docs`, the iCal expor
   [ADR 3](docs/adr/0003-single-stays-table.md)
 - Notes on where the build differs from the original plan and why:
   [ADR 4](docs/adr/0004-m3-deviations.md), [ADR 5](docs/adr/0005-m5-deviations.md).
+- **Kafka instead of RabbitMQ**, keyed by property so one property's events stay in order.
+  [ADR 6](docs/adr/0006-rabbitmq-to-kafka.md)
+- **An inbox table** makes consumers idempotent, so duplicate deliveries change nothing.
+  [ADR 7](docs/adr/0007-inbox-table.md)
 
 Smaller choices worth knowing:
 
@@ -95,12 +106,40 @@ Smaller choices worth knowing:
 - Outbound pushes are idempotent (they replace the OTA's whole 365-day calendar), retry with a delay, and end in a
   dead-letter queue after 5 attempts.
 
+## Phase 1 → Phase 2: RabbitMQ to Kafka and a real worker
+
+Phase 1 (branch [`v1-rabbitmq`](../../tree/v1-rabbitmq)) was one process on RabbitMQ. Phase 2 keeps the same
+domain and swaps the plumbing, so the before/after is easy to compare.
+
+| | Phase 1 (RabbitMQ) | Phase 2 (Kafka) |
+|---|---|---|
+| Processes | one app | `api` (HTTP) and `worker`, same image, worker runs 2 replicas |
+| Ordering | none across messages | per property (partition key = `propertyId`) |
+| Consumers | one queue, one consumer | independent groups: `ota-sync` and `occupancy-projection` |
+| Retry / DLQ | TTL retry queue, `x-death` count | retry topic with `x-attempt` and `x-not-before` headers, DLQ topic |
+| Replay | none, acked messages are gone | 7 days of retention; `npm run replay:occupancy` rebuilds the read model |
+| Duplicates | possible, one idempotent consumer | possible; inbox table (`ProcessedEvent`) makes consumers idempotent |
+| Offsets | n/a (acks) | committed explicitly after the side effect |
+| Given up | | simple per-message retry and routing, now hand-built |
+
+How it holds up when a worker dies: the failure test starts two workers in one consumer group, publishes 120 events,
+stops one of them mid-stream, and checks that every event took effect exactly once (120 inbox rows, projection totals
+exactly 120 nights and 12,000 cents). It passed 10 runs in a row locally.
+
+### Seeing one request as one trace
+
+With `docker compose up`, book a stay (or run `./scripts/demo.sh`) and open Jaeger at <http://localhost:16686>. Pick
+service `staysync-api` and the `POST /properties/:id/stays` trace: it continues through `outbox publish`, the two
+consumer groups (`ota-sync process`, `occupancy-projection process`) and `ota push`. The trace context is stored on the
+outbox row and travels in the Kafka `traceparent` header, so the async hop does not break the trace. If the caller
+sends a `traceparent` header, the trace continues from it.
+
 ## Tests
 
 | Layer | What | Tooling |
 |---|---|---|
-| Unit | pricing engine (100% branch coverage), availability, iCal export/parse/diff, HMAC, retry counting | Jest |
-| End to end | HTTP → Postgres → Kafka → mock OTA, concurrency, idempotency, retries and DLQ | Jest + Supertest + Testcontainers (Postgres 16, Kafka 7.7 (KRaft)) |
+| Unit | pricing engine (100% branch coverage), availability, iCal export/parse/diff, HMAC, retry counting, event envelopes, occupancy reducer | Jest |
+| End to end | HTTP → Postgres → Kafka → mock OTA, concurrency, idempotency, retries and DLQ, event ordering, replay equals live, worker failure, trace propagation | Jest + Supertest + Testcontainers (Postgres 16, Kafka 7.7 (KRaft)) |
 
 The e2e suite uses real infrastructure and never mocks the database. Docker must be running.
 
@@ -118,10 +157,12 @@ See [`.env.example`](.env.example). The app validates its environment on startup
 
 ## What I'd do next
 
-- **CDC with Debezium** instead of polling the outbox, plus a retention job for published rows.
-- **Split the worker** (outbox publisher, OTA consumer, iCal poller) out of the API process; partition work by property.
+- **CDC with Debezium** instead of polling the outbox (Outbox Event Router), plus a retention job for old outbox rows.
+  Not built yet: it needs a Kafka Connect image, and the polling publisher is safe for multiple replicas meanwhile.
+- **Schema registry** (Avro or Protobuf) instead of a versioned JSON envelope checked with `zod`.
+- **Exactly-once transactions** only if an effect ever lives in Kafka itself; today idempotent consumers are enough.
+- **Partition planning for hot properties**: one very busy property pins one partition, so I would size partitions from
+  real traffic.
 - **Real OTA APIs** (Airbnb, Booking.com, Expedia) behind the existing channel abstraction.
 - **Per-channel rate limits** and circuit breaking for outbound calls.
-- **Observability with OpenTelemetry**: traces across HTTP → outbox → Kafka → OTA, plus metrics for consumer lag and
-  DLQ size.
-- Multi-instance safety for iCal sync (advisory lock) and iCal recurrence rules.
+- iCal recurrence rules.

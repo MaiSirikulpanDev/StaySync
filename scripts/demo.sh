@@ -58,6 +58,26 @@ echo "$CALLS" | grep -q "\"listingId\":\"$LISTING\"" \
   && echo "mock OTA received an availability push for $LISTING" \
   || { echo "no push seen after 20s"; exit 1; }
 
+say "7b. Kill one of the two workers: a new booking must still reach the OTA"
+VICTIM=$(docker compose ps -q worker 2>/dev/null | head -1 || true)
+if [ -z "$VICTIM" ]; then
+  echo "(skipped: run this from the repo folder with docker compose to kill a worker)"
+else
+  BEFORE=$(curl -s "$OTA/_calls" | grep -o "\"listingId\":\"$LISTING\"" | wc -l)
+  docker kill "$VICTIM" >/dev/null && echo "killed worker ${VICTIM:0:12}"
+  call POST "/properties/$ID/stays" \
+    "{\"kind\":\"BOOKING\",\"checkIn\":\"$(in_days 30)\",\"checkOut\":\"$(in_days 32)\",\"guestName\":\"Linus\",\"guests\":1}"
+  echo "waiting for the surviving worker to take over the partitions (up to ~90s)..."
+  for _ in $(seq 1 90); do
+    NOW=$(curl -s "$OTA/_calls" | grep -o "\"listingId\":\"$LISTING\"" | wc -l)
+    [ "$NOW" -gt "$BEFORE" ] && break
+    sleep 1
+  done
+  [ "$NOW" -gt "$BEFORE" ] \
+    && echo "mock OTA still received the push" \
+    || { echo "no push after the worker was killed"; exit 1; }
+fi
+
 say "8. The OTA sends us a booking (signed webhook) for $OTA_IN to $OTA_OUT"
 curl -s -X POST "$OTA/_simulate/booking" -H 'content-type: application/json' \
   -d "{\"type\":\"booking.created\",\"listingId\":\"$LISTING\",\"bookingId\":\"ota-$LISTING\",\"checkIn\":\"$OTA_IN\",\"checkOut\":\"$OTA_OUT\",\"guestName\":\"Grace Hopper\",\"guests\":2,\"totalCents\":60000}"
@@ -76,4 +96,4 @@ echo "$(echo "$AV" | grep -o '"available":false' | wc -l | tr -d ' ') unavailabl
 say "11. iCal feed for Airbnb / Booking.com (no guest details)"
 curl -s "$API/properties/$ID/calendar.ics?token=$TOKEN"
 
-printf '\nDone. Swagger UI: %s/docs\n' "$API"
+printf '\nDone. Swagger UI: %s/docs   Traces: http://localhost:16686 (service staysync-api)\n' "$API"

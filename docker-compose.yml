@@ -32,6 +32,13 @@ services:
       interval: 5s
       retries: 20
 
+  # Trace viewer: http://localhost:16686 (OTLP/HTTP in on 4318)
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    ports: ['16686:16686', '4318:4318']
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+
   # Fake OTA for the demo: receives availability pushes, sends signed webhooks on demand.
   mock-ota:
     build:
@@ -52,6 +59,7 @@ services:
       API_KEY: dev-api-key
       OTA_BASE_URL: http://mock-ota:4000
       OTA_WEBHOOK_SECRET: dev-webhook-secret
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
@@ -60,6 +68,7 @@ services:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }
       mock-ota: { condition: service_started }
+      jaeger: { condition: service_started }
 
   # Same image, different command: outbox publisher, both consumer groups, iCal poller.
   # Two replicas share the topic partitions; the api runs the migrations first.
