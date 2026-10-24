@@ -7,6 +7,7 @@ import { HealthModule } from './health/health.module';
 import { ChannelsModule } from './channels/channels.module';
 import { IcalModule } from './channels/ical/ical.module';
 import { MockOtaModule } from './channels/mock-ota/mock-ota.module';
+import { McpModule } from './mcp/mcp.module';
 import { OccupancyModule } from './occupancy/occupancy.module';
 import { SyncIssuesModule } from './sync-issues/sync-issues.module';
 import { PricingModule } from './pricing/pricing.module';
@@ -25,6 +26,7 @@ import { StaysModule } from './stays/stays.module';
     IcalModule,
     SyncIssuesModule,
     OccupancyModule,
+    McpModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ApiKeyGuard },

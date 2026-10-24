@@ -79,6 +79,35 @@ All routes need the `x-api-key` header except `/health`, `/docs`, the iCal expor
 | GET | `/properties/:id/calendar.ics?token=` | iCal export |
 | POST | `/webhooks/mock-ota` | Inbound OTA events |
 | GET/POST | `/sync-issues`, `/sync-issues/:id/resolve` | Conflicts that need a human |
+| POST | `/mcp` | MCP tools for AI assistants (see below) |
+
+## Use it from an AI assistant (MCP)
+
+The app is also an [MCP](https://modelcontextprotocol.io) server at `POST /mcp` (Streamable HTTP, stateless, same
+`x-api-key`). It offers five read-only tools: `list_properties`, `get_property`, `check_availability`, `get_quote` and
+`find_stays`. They call the same services as the REST API. Tool results never include guest emails, surnames or the
+iCal secret.
+
+Claude Code:
+
+```bash
+claude mcp add --transport http staysync http://localhost:3000/mcp --header "x-api-key: dev-api-key"
+```
+
+Claude Desktop (`claude_desktop_config.json`), through the `mcp-remote` bridge:
+
+```json
+{
+  "mcpServers": {
+    "staysync": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:3000/mcp", "--header", "x-api-key:dev-api-key"]
+    }
+  }
+}
+```
+
+Then ask, for example: *"Is Beach House free from 12 to 15 December for 4 guests, and what would it cost?"*
 
 ## Design decisions
 
