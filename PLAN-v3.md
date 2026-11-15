@@ -12,7 +12,7 @@
 > Phase 3. Where they disagree, this file wins. Build one milestone at a time (section 7). **Never run anything that
 > calls a paid model API unless the owner says yes in chat.** `npm test` and CI must pass without any AI key.
 >
-> **Status:** M13 is done.
+> **Status:** M13 is done. M14 is built and tested without a key; its paid smoke run is waiting for the owner's go-ahead.
 
 ---
 
@@ -240,7 +240,7 @@ runs happen only where a milestone says so, with the owner's go-ahead.
 - The e2e test drives it with the real MCP client.
 - The README explains how to connect Claude Code and Claude Desktop.
 
-### M14: Guest inbox, proposals, Claude agent (first paid smoke runs, about $0.10)
+### M14: Guest inbox, proposals, Claude agent (first paid smoke runs, about $0.10) 🚧 code done, smoke run pending
 
 - Add `GuestMessage`, `AgentRun`, `AgentToolCall` and `AgentProposal`, with migrations. `resetDb` truncates them.
 - Add `POST /properties/:id/guest-messages`, which writes an outbox event `guest_message.received` (envelope v1).

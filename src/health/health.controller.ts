@@ -7,7 +7,12 @@ import {
 } from '@nestjs/terminus';
 import { Public } from '../common/public.decorator';
 import { OCCUPANCY_GROUP } from '../occupancy/occupancy.projection';
-import { MessagingService, OTA_GROUP } from '../messaging/messaging.service';
+import {
+  AGENT_GROUP,
+  GUEST_STREAM,
+  MessagingService,
+  OTA_GROUP,
+} from '../messaging/messaging.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('health')
@@ -57,8 +62,16 @@ export class HealthController {
     const i = this.indicator.check('consumerLag');
     try {
       const groups = [OTA_GROUP, OCCUPANCY_GROUP];
-      const lags = await Promise.all(groups.map((g) => this.messaging.lag(g)));
-      return i.up(Object.fromEntries(groups.map((g, n) => [g, lags[n]])));
+      const lags = await Promise.all([
+        ...groups.map((g) => this.messaging.lag(g)),
+        // Without the optional agent process this only grows: it is not a fault of api or worker.
+        this.messaging.lag(AGENT_GROUP, GUEST_STREAM),
+      ]);
+      return i.up(
+        Object.fromEntries(
+          [...groups, AGENT_GROUP].map((g, n) => [g, lags[n]]),
+        ),
+      );
     } catch (e) {
       return i.down({ message: (e as Error).message });
     }
@@ -67,7 +80,11 @@ export class HealthController {
   private async dlq() {
     const i = this.indicator.check('dlq');
     try {
-      return i.up({ depth: await this.messaging.dlqDepth() });
+      const [depth, guestMessages] = await Promise.all([
+        this.messaging.dlqDepth(),
+        this.messaging.dlqDepth(GUEST_STREAM),
+      ]);
+      return i.up({ depth, guestMessages });
     } catch (e) {
       return i.down({ message: (e as Error).message });
     }

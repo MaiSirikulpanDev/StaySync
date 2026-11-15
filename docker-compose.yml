@@ -80,3 +80,18 @@ services:
       replicas: 2
     depends_on:
       api: { condition: service_healthy }
+
+  # Phase 3: the guest-inbox agent. Off by default; `ANTHROPIC_API_KEY=... docker compose --profile ai up`.
+  # Same image as api and worker. It exits at startup without a key, and api and worker never need one.
+  agent:
+    build: .
+    profiles: ['ai']
+    command: ['node', 'dist/agent.js']
+    environment:
+      <<: *app-env
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AGENT_MODEL: ${AGENT_MODEL:-claude-haiku-5-5}
+      AGENT_DAILY_BUDGET_USD: ${AGENT_DAILY_BUDGET_USD:-1}
+      STAYSYNC_MCP_URL: http://api:3000/mcp
+    depends_on:
+      api: { condition: service_healthy }

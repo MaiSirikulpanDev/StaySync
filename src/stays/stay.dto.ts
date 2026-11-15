@@ -33,3 +33,8 @@ export class AvailabilityQueryDto {
   @IsDateOnly() from: string;
   @IsDateOnly() to: string;
 }
+
+export class ChangeDatesDto {
+  @IsDateOnly() checkIn: string;
+  @IsDateOnly() checkOut: string;
+}

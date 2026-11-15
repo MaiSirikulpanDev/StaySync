@@ -18,6 +18,7 @@ export default async function setup() {
     OTA_BASE_URL: 'http://127.0.0.1:4010',
     RETRY_DELAY_MS: '500',
     OUTBOX_POLL_MS: '200',
+    ANTHROPIC_API_KEY: 'test-key-never-sent', // the agent consumer insists on one; no test calls the model
   });
   execSync('npx prisma migrate deploy', { stdio: 'inherit', env: process.env });
 }

@@ -13,6 +13,7 @@ import { eventPayload } from './stay-event';
 import { buildCalendar } from './availability';
 import {
   AvailabilityQueryDto,
+  ChangeDatesDto,
   CreateStayDto,
   ListStaysQueryDto,
 } from './stay.dto';
@@ -114,6 +115,46 @@ export class StaysService {
         await this.outbox.add(tx, 'stay.cancelled', eventPayload(cancelled));
       return view(cancelled);
     });
+  }
+
+  /**
+   * Moves a confirmed booking to new dates in place. The exclusion constraint still guards the
+   * new range (a row never conflicts with itself). The occupancy read model has no stay.updated
+   * handling, so the move is published as the old range cancelled plus the new one created.
+   * ponytail: two events for one change; give stay.updated real semantics if consumers need the difference.
+   */
+  async changeDates(id: string, dto: ChangeDatesDto) {
+    const stay = await this.prisma.stay.findUnique({ where: { id } });
+    if (!stay) throw new NotFoundException('Stay not found');
+    if (stay.kind !== StayKind.BOOKING || stay.status !== StayStatus.CONFIRMED)
+      throw new BadRequestException('Only a confirmed booking can be moved');
+    assertRange(dto.checkIn, dto.checkOut);
+    const q = await this.pricing.quote(stay.propertyId, {
+      checkIn: dto.checkIn,
+      checkOut: dto.checkOut,
+      guests: stay.guests ?? undefined,
+    });
+    if (!q.meetsMinStay) {
+      throw new BadRequestException({
+        code: 'MIN_STAY_NOT_MET',
+        message: `Minimum stay is ${q.minStay} nights`,
+      });
+    }
+    return view(
+      await this.prisma.$transaction(async (tx) => {
+        const moved = await tx.stay.update({
+          where: { id },
+          data: {
+            checkIn: new Date(dto.checkIn),
+            checkOut: new Date(dto.checkOut),
+            totalCents: q.totalCents,
+          },
+        });
+        await this.outbox.add(tx, 'stay.cancelled', eventPayload(stay));
+        await this.outbox.add(tx, 'stay.created', eventPayload(moved));
+        return moved;
+      }),
+    );
   }
 
   async availability(propertyId: string, { from, to }: AvailabilityQueryDto) {

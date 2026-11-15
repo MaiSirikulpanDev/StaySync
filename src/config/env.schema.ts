@@ -15,6 +15,12 @@ const schema = z.object({
   ICAL_POLL_CRON: z.string().default('*/15 * * * *'),
   RETRY_DELAY_MS: z.coerce.number().int().positive().default(10000),
   OUTBOX_POLL_MS: z.coerce.number().int().positive().default(1000),
+  // Agent process only; api and worker run without any of these. The agent exits at startup without a key.
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  AGENT_MODEL: z.string().min(1).default('claude-haiku-5-5'),
+  AGENT_DAILY_BUDGET_USD: z.coerce.number().nonnegative().default(1),
+  AGENT_RUN_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
+  STAYSYNC_MCP_URL: z.string().url().default('http://localhost:3000/mcp'),
 });
 
 export type Env = z.infer<typeof schema>;
