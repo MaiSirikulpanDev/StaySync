@@ -25,6 +25,6 @@ export async function resetDb(app: INestApplication) {
   await app
     .get(PrismaService)
     .$executeRawUnsafe(
-      'TRUNCATE "Property", "OutboxEvent", "ProcessedWebhook", "ProcessedEvent", "PropertyOccupancyDaily" CASCADE',
+      'TRUNCATE "Property", "OutboxEvent", "ProcessedWebhook", "ProcessedEvent", "PropertyOccupancyDaily", "GuestMessage", "AgentRun", "AgentToolCall", "AgentProposal" CASCADE',
     );
 }

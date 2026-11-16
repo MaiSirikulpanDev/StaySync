@@ -22,6 +22,7 @@
     "replay:occupancy": "ts-node scripts/replay-occupancy.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.325",
     "@confluentinc/kafka-javascript": "^1.11.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@nestjs/common": "^11.0.1",

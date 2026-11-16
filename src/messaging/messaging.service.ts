@@ -14,6 +14,12 @@ import {
 } from '@opentelemetry/api';
 import type { Env } from '../config/env.schema';
 import { inSpan, contextFrom, traceparentOf } from '../tracing/trace';
+import type { z } from 'zod';
+import {
+  GUEST_MESSAGE_EVENT,
+  guestMessageEventSchema,
+  toGuestEnvelope,
+} from '../events/guest-message-events';
 import { StayEvent, stayEventSchema, toEnvelope } from '../events/stay-events';
 import {
   ATTEMPT_HEADER,
@@ -22,20 +28,39 @@ import {
   notBefore,
 } from './retry';
 
+/** A topic with its retry and DLQ siblings, and the schema every message on it must satisfy. */
+export interface Stream<T = unknown> {
+  topic: string;
+  retry: string;
+  dlq: string;
+  schema: z.ZodType<T>;
+}
+const stream = <T>(topic: string, schema: z.ZodType<T>): Stream<T> => ({
+  topic,
+  retry: `${topic}.retry`,
+  dlq: `${topic}.dlq`,
+  schema,
+});
+
 export const EVENTS_TOPIC = 'staysync.stay-events';
 export const RETRY_TOPIC = `${EVENTS_TOPIC}.retry`;
 export const DLQ_TOPIC = `${EVENTS_TOPIC}.dlq`;
+export const STAY_STREAM = stream(EVENTS_TOPIC, stayEventSchema);
+export const GUEST_MESSAGES_TOPIC = 'staysync.guest-messages';
+export const GUEST_STREAM = stream(
+  GUEST_MESSAGES_TOPIC,
+  guestMessageEventSchema,
+);
 export const OTA_GROUP = 'ota-sync';
+export const AGENT_GROUP = 'agent-claude';
 export const MAX_ATTEMPTS = 5;
 const GROUP_HEADER = 'x-group';
 
-type Handler = (event: StayEvent) => Promise<void>;
-
-const TOPICS = [
-  { topic: EVENTS_TOPIC, numPartitions: 6 },
-  { topic: RETRY_TOPIC, numPartitions: 6 },
-  { topic: DLQ_TOPIC, numPartitions: 1 },
-];
+const TOPICS = [STAY_STREAM, GUEST_STREAM].flatMap((s) => [
+  { topic: s.topic, numPartitions: 6 },
+  { topic: s.retry, numPartitions: 6 },
+  { topic: s.dlq, numPartitions: 1 },
+]);
 /** Retry and DLQ copies keep the trace of the original event. */
 const traceHeaders = (headers: Record<string, unknown> | undefined) => {
   const traceparent = traceparentOf(headers);
@@ -95,7 +120,10 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     createdAt: Date;
     traceparent?: string | null;
   }): Promise<void> {
-    const event = toEnvelope(row);
+    // Routed by event type, so a consumer never sees a type it would have to send to the DLQ.
+    const guest = row.type === GUEST_MESSAGE_EVENT;
+    const target = guest ? GUEST_STREAM : STAY_STREAM;
+    const event = guest ? toGuestEnvelope(row) : toEnvelope(row);
     // Child of the request that wrote the outbox row; its own context rides in the Kafka headers.
     await inSpan(
       'outbox publish',
@@ -104,7 +132,7 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
       async () => {
         const headers: Record<string, string> = {};
         propagation.inject(context.active(), headers);
-        await this.send(EVENTS_TOPIC, {
+        await this.send(target.topic, {
           key: event.propertyId,
           value: JSON.stringify(event),
           headers,
@@ -118,9 +146,9 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     await this.admin.listTopics();
   }
 
-  /** Messages the group has not committed yet, over the main and retry topics. */
-  async lag(group: string): Promise<number> {
-    const topics = [EVENTS_TOPIC, RETRY_TOPIC];
+  /** Messages the group has not committed yet, over the stream's main and retry topics. */
+  async lag(group: string, s: Stream = STAY_STREAM): Promise<number> {
+    const topics = [s.topic, s.retry];
     const committed = await this.admin.fetchOffsets({ groupId: group, topics });
     let lag = 0;
     for (const topic of topics) {
@@ -136,9 +164,9 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     return lag;
   }
 
-  /** Messages currently parked in the DLQ topic. */
-  async dlqDepth(): Promise<number> {
-    const ends = await this.admin.fetchTopicOffsets(DLQ_TOPIC);
+  /** Messages currently parked in the stream's DLQ topic. */
+  async dlqDepth(s: Stream = STAY_STREAM): Promise<number> {
+    const ends = await this.admin.fetchTopicOffsets(s.dlq);
     return ends.reduce((n, e) => n + Number(e.high) - Number(e.low), 0);
   }
 
@@ -147,16 +175,35 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
    * The offset is committed only after the handler (or the hand-off to retry/DLQ) succeeded,
    * so a crash means redelivery, never loss.
    */
-  async consume(group: string, handler: Handler) {
+  consume(
+    group: string,
+    handler: (e: StayEvent) => Promise<void>,
+  ): Promise<void>;
+  consume<T>(
+    group: string,
+    handler: (e: T) => Promise<void>,
+    s: Stream<T>,
+  ): Promise<void>;
+  async consume(
+    group: string,
+    handler: (e: never) => Promise<void>,
+    s: Stream<unknown> = STAY_STREAM,
+  ): Promise<void> {
     const consumer = this.kafka.consumer({
       kafkaJS: { groupId: group, fromBeginning: true, autoCommit: false },
     });
     this.consumers.push(consumer);
     await consumer.connect();
-    await consumer.subscribe({ topics: [EVENTS_TOPIC, RETRY_TOPIC] });
+    await consumer.subscribe({ topics: [s.topic, s.retry] });
     await consumer.run({
       eachMessage: async ({ topic, partition, message }) => {
-        await this.handle(group, handler, topic, message);
+        await this.handle(
+          group,
+          handler as (e: unknown) => Promise<void>,
+          s,
+          topic,
+          message,
+        );
         // Only now, after the side effect (or the hand-off to retry/DLQ): a crash before this
         // line means redelivery, never loss.
         await consumer.commitOffsets([
@@ -170,27 +217,28 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private async handle(
+  private async handle<T>(
     group: string,
-    handler: Handler,
+    handler: (event: T) => Promise<void>,
+    s: Stream<T>,
     topic: string,
     message: KafkaJS.Message & { offset: string },
   ) {
     // Retry/DLQ topics are shared; a retry is only for the group that failed.
     if (
-      topic === RETRY_TOPIC &&
+      topic === s.retry &&
       message.headers?.[GROUP_HEADER]?.toString() !== group
     )
       return;
     // Retries wait out their delay here, which also keeps per-partition order.
     const wait = notBefore(message.headers) - Date.now();
-    if (topic === RETRY_TOPIC && wait > 0) await sleep(wait);
+    if (topic === s.retry && wait > 0) await sleep(wait);
     const raw = message.value?.toString() ?? '';
-    const event = this.decode(raw);
+    const event = this.decode(s, raw);
     if (event instanceof Error) {
       // Poison message: retrying cannot fix it, so park it and move on.
       this.logger.warn(`${group} invalid message: ${event.message}`);
-      await this.send(DLQ_TOPIC, {
+      await this.send(s.dlq, {
         key: message.key?.toString() ?? null,
         value: raw,
         headers: {
@@ -212,19 +260,20 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
         () => handler(event),
       );
     } catch (e) {
-      await this.fail(message, raw, e as Error, group);
+      await this.fail(s, message, raw, e as Error, group);
     }
   }
 
-  private decode(raw: string): StayEvent | Error {
+  private decode<T>(s: Stream<T>, raw: string): T | Error {
     try {
-      return stayEventSchema.parse(JSON.parse(raw));
+      return s.schema.parse(JSON.parse(raw));
     } catch (e) {
       return e instanceof Error ? e : new Error(String(e));
     }
   }
 
   private async fail(
+    s: Stream,
     message: KafkaJS.Message & { key?: unknown },
     raw: string,
     e: Error,
@@ -237,7 +286,7 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     const key = message.key?.toString() ?? null;
     if (attempt < MAX_ATTEMPTS) {
       const delay = Number(this.config.get('RETRY_DELAY_MS'));
-      return this.send(RETRY_TOPIC, {
+      return this.send(s.retry, {
         key,
         value: raw,
         headers: {
@@ -249,7 +298,7 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
       });
     }
     // Out of attempts: park it (acked) before the offset is committed so it cannot be lost.
-    return this.send(DLQ_TOPIC, {
+    return this.send(s.dlq, {
       key,
       value: raw,
       headers: {

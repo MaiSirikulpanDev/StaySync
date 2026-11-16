@@ -13,19 +13,20 @@ enum PricingRuleType {
 }
 
 model Property {
-  id            String        @id @default(uuid()) @db.Uuid
+  id            String         @id @default(uuid()) @db.Uuid
   name          String
   timezone      String
-  currency      String        @db.Char(3)
+  currency      String         @db.Char(3)
   baseRateCents Int
-  minStay       Int           @default(1)
+  minStay       Int            @default(1)
   maxGuests     Int
-  icalToken     String        @unique
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  icalToken     String         @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   pricingRules  PricingRule[]
   stays         Stay[]
   channels      Channel[]
+  guestMessages GuestMessage[]
 }
 
 model PricingRule {
@@ -61,21 +62,22 @@ enum StaySource {
 
 // The no-overlap EXCLUDE constraint and CHECK (checkOut > checkIn) live in raw SQL in the migration.
 model Stay {
-  id         String     @id @default(uuid()) @db.Uuid
-  propertyId String     @db.Uuid
-  property   Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  kind       StayKind
-  status     StayStatus @default(CONFIRMED)
-  source     StaySource @default(DIRECT)
-  externalId String?
-  checkIn    DateTime   @db.Date
-  checkOut   DateTime   @db.Date
-  guestName  String?
-  guestEmail String?
-  guests     Int?
-  totalCents Int?
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  id            String         @id @default(uuid()) @db.Uuid
+  propertyId    String         @db.Uuid
+  property      Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  kind          StayKind
+  status        StayStatus     @default(CONFIRMED)
+  source        StaySource     @default(DIRECT)
+  externalId    String?
+  checkIn       DateTime       @db.Date
+  checkOut      DateTime       @db.Date
+  guestName     String?
+  guestEmail    String?
+  guests        Int?
+  totalCents    Int?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  guestMessages GuestMessage[]
 
   @@unique([source, externalId])
   @@index([propertyId, checkIn])
@@ -147,4 +149,97 @@ model PropertyOccupancyDaily {
   lastEventId  String   @db.Uuid
 
   @@id([propertyId, date])
+}
+
+// A message from a guest. The agent reads it, saves a reply draft and files proposals; nothing is sent.
+model GuestMessage {
+  id         String     @id @default(uuid()) @db.Uuid
+  propertyId String     @db.Uuid
+  property   Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  stayId     String?    @db.Uuid
+  stay       Stay?      @relation(fields: [stayId], references: [id], onDelete: SetNull)
+  fromName   String
+  body       String
+  receivedAt DateTime   @default(now())
+  replyDraft String?
+  repliedAt  DateTime? // when the current draft was saved
+  runs       AgentRun[]
+
+  @@index([propertyId])
+}
+
+enum AgentRunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  TIMED_OUT
+  SKIPPED_BUDGET
+}
+
+// One agent attempt at one guest message. Written by the agent process (and by the eval runner),
+// so grading reads the database and works the same for every agent framework.
+model AgentRun {
+  id             String          @id @default(uuid()) @db.Uuid
+  guestMessageId String          @db.Uuid
+  guestMessage   GuestMessage    @relation(fields: [guestMessageId], references: [id], onDelete: Cascade)
+  agent          String // 'claude' | 'adk'
+  model          String
+  status         AgentRunStatus  @default(RUNNING)
+  inputTokens    Int             @default(0) // includes cache reads and writes
+  outputTokens   Int             @default(0)
+  costMicros     Int             @default(0) // millionths of a USD
+  durationMs     Int?
+  traceId        String?
+  error          String?
+  createdAt      DateTime        @default(now())
+  toolCalls      AgentToolCall[]
+  proposals      AgentProposal[]
+
+  @@index([guestMessageId])
+  @@index([createdAt])
+}
+
+// Written by the MCP server for every tool call that carries an x-agent-run-id header.
+model AgentToolCall {
+  id         String   @id @default(uuid()) @db.Uuid
+  agentRunId String   @db.Uuid
+  agentRun   AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+  tool       String
+  input      Json
+  ok         Boolean
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  @@index([agentRunId])
+}
+
+enum ProposalType {
+  CREATE_BOOKING
+  CANCEL_STAY
+  CHANGE_DATES
+  CREATE_BLOCK
+}
+
+enum ProposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FAILED
+}
+
+// What the agent wants done. Only POST /agent-proposals/:id/approve turns it into a change.
+model AgentProposal {
+  id         String         @id @default(uuid()) @db.Uuid
+  agentRunId String         @db.Uuid
+  agentRun   AgentRun       @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+  type       ProposalType
+  params     Json
+  reason     String
+  status     ProposalStatus @default(PENDING)
+  result     Json? // APPROVED: what was created; FAILED: why
+  createdAt  DateTime       @default(now())
+  decidedAt  DateTime?
+
+  @@index([agentRunId])
+  @@index([status])
 }

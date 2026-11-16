@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { CoreModule } from './core.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { AgentProposalsModule } from './agent-proposals/agent-proposals.module';
+import { GuestMessagesModule } from './guest-messages/guest-messages.module';
 import { ApiKeyGuard } from './common/api-key.guard';
 import { HealthModule } from './health/health.module';
 import { ChannelsModule } from './channels/channels.module';
@@ -26,6 +28,8 @@ import { StaysModule } from './stays/stays.module';
     IcalModule,
     SyncIssuesModule,
     OccupancyModule,
+    GuestMessagesModule,
+    AgentProposalsModule,
     McpModule,
   ],
   providers: [

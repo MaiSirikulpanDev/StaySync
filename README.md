@@ -109,6 +109,47 @@ Claude Desktop (`claude_desktop_config.json`), through the `mcp-remote` bridge:
 
 Then ask, for example: *"Is Beach House free from 12 to 15 December for 4 guests, and what would it cost?"*
 
+## Guest inbox agent (Phase 3)
+
+A guest message arrives, an agent drafts a reply and files proposals, and **a human approves each change**. The agent
+cannot change a stay: its only write tools are `save_reply_draft` and `propose_action`, and a proposal does nothing
+until `POST /agent-proposals/:id/approve`. That rule is enforced by the server, not by a prompt, so it holds for any
+model or framework.
+
+```mermaid
+flowchart LR
+  G[POST /properties/:id/guest-messages] --> DB[(Postgres + outbox)]
+  DB --> K[[Kafka staysync.guest-messages]]
+  K -->|group agent-claude| A[agent process<br/>Claude Agent SDK]
+  A -->|MCP + x-agent-run-id| M[/mcp/]
+  M --> DB
+  H[owner] -->|approve / reject| P[/agent-proposals/]
+  P -->|StaysService| DB
+```
+
+- The agent is a third process (`dist/agent.js`, same image) in its own consumer group, so a slow run never holds
+  partitions that `ota-sync` or `occupancy-projection` need. `api` and `worker` never import the agent SDK and need no key.
+- Delivery is at least once, but a message makes one model call: the inbox row and the `AgentRun` commit together.
+- Every run is recorded (`AgentRun`: tokens, cost, duration, trace id) and every tool call too (`AgentToolCall`), so
+  results can be graded from the database. `AGENT_DAILY_BUDGET_USD` stops new runs once the day's spend reaches it.
+- Tools show a guest's first name only, and the message text arrives flagged as untrusted data.
+- Approving goes through `StaysService`, so the overlap constraint, the outbox and Kafka apply as for any booking. If
+  the dates were taken meanwhile, the proposal becomes `FAILED` with the reason.
+
+Try it (this calls the paid Claude API; Haiku 5.5 costs a fraction of a cent per message):
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... docker compose --profile ai up --build
+# create a property (see the demo), then:
+curl -X POST localhost:3000/properties/$PROPERTY/guest-messages -H 'x-api-key: dev-api-key' \
+  -H 'content-type: application/json' \
+  -d '{"fromName":"Ann Lee","body":"Is 12-15 Dec free for 4 people, and how much would it be?"}'
+curl localhost:3000/guest-messages/$MESSAGE_ID -H 'x-api-key: dev-api-key'   # draft, runs, proposals
+curl -X POST localhost:3000/agent-proposals/$PROPOSAL_ID/approve -H 'x-api-key: dev-api-key'
+```
+
+The tests need no key: the e2e suite replaces the model call with a script that makes the same MCP calls.
+
 ## Design decisions
 
 - **The database prevents double bookings**, not application code: a PostgreSQL exclusion constraint on a half-open
