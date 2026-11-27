@@ -13,7 +13,8 @@
 > calls a paid model API unless the owner says yes in chat.** `npm test` and CI must pass without any AI key.
 >
 > **Status:** M13 is done. M14 is merged; its paid smoke run is waiting for the owner's go-ahead. M15 is built and
-> its grader tests pass; the first paid eval run and the baseline are waiting for the owner's go-ahead.
+> merged; the first paid eval run and the baseline are waiting for the owner's go-ahead. M16 is built and tested
+> without a key.
 
 ---
 
@@ -274,7 +275,7 @@ it creates the stay, which then reaches the mock OTA.
 **Done when:** `npm run eval -- --agent claude` prints a table, and a deliberately broken prompt makes it fail
 against the baseline.
 
-### M16: Agent tracing and cost (small, because Phase 2 built the tracing)
+### M16: Agent tracing and cost (small, because Phase 2 built the tracing) 🚧 code done; real cost numbers pending
 
 - The agent consumer span continues the `traceparent` from the Kafka header, so it is part of the existing trace.
 - Child spans cover each model turn and each tool call, with GenAI semantic-convention attributes:

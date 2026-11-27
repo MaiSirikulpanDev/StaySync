@@ -1,4 +1,8 @@
-import type { RunAgent, RunAgentResult } from './agent.types';
+import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { currentTraceparent, inSpan } from '../tracing/trace';
+import { RunTracer } from './agent-trace';
+import type { RunAgent, RunAgentInput, RunAgentResult } from './agent.types';
 
 const SERVER = 'staysync';
 // The only tools the agent may call: StaySync's own MCP tools. None of them can change a stay.
@@ -24,15 +28,59 @@ const systemPrompt = (
 
 You cannot change bookings yourself; the owner approves proposals. Never share details about other guests.`;
 
+/** The SDK's `query`, as far as this file uses it. A test can pass a fake that yields SDK messages. */
+export type QueryFn = (params: {
+  prompt: string;
+  options: Options;
+}) => AsyncIterable<SDKMessage>;
+
 /**
  * One agent run on the Claude Agent SDK. Built-in tools are switched off (`tools: []`), so there
  * is no file, shell or web access; only the StaySync MCP tools are allowed, and anything else is
  * denied without a prompt. Failures come back as a result, not an exception: the caller must
  * record a run that cost money.
+ *
+ * The whole run is one `invoke_agent` span under whatever span is active (the Kafka consumer
+ * span), with a child span per model turn and per tool call. The MCP connection carries this
+ * span's traceparent, so the server-side tool spans join the same trace.
  */
-export const runAgent: RunAgent = async (i) => {
-  // Loaded here, not at the top: the SDK is ESM-only and only the agent process needs it.
-  const { query } = await import('@anthropic-ai/claude-agent-sdk');
+export const makeRunAgent =
+  (loadQuery: () => Promise<QueryFn>): RunAgent =>
+  (i) =>
+    inSpan(
+      'invoke_agent staysync-inbox',
+      SpanKind.CLIENT,
+      context.active(),
+      async (span) => {
+        span.setAttributes({
+          'gen_ai.operation.name': 'invoke_agent',
+          'gen_ai.provider.name': 'anthropic',
+          'gen_ai.agent.name': 'staysync-inbox',
+          'gen_ai.request.model': i.model,
+          'staysync.agent_run_id': i.runId,
+        });
+        const tracer = new RunTracer(context.active(), i.model);
+        const result = await execute(await loadQuery(), i, tracer);
+        tracer.end();
+        span.setAttributes({
+          'gen_ai.usage.input_tokens': result.inputTokens,
+          'gen_ai.usage.output_tokens': result.outputTokens,
+          'staysync.cost_usd': result.costMicros / 1_000_000,
+          'staysync.turns': tracer.totals.turns,
+          'staysync.tool_calls': tracer.totals.toolCalls,
+        });
+        if (result.status !== 'SUCCEEDED')
+          span.setStatus({ code: SpanStatusCode.ERROR, message: result.error });
+        return result;
+      },
+    );
+
+async function execute(
+  query: QueryFn,
+  i: RunAgentInput,
+  tracer: RunTracer,
+): Promise<RunAgentResult> {
+  const traceparent = currentTraceparent(); // the invoke_agent span's
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), i.timeoutMs);
   let result: RunAgentResult = emptyResult(
@@ -56,7 +104,7 @@ export const runAgent: RunAgent = async (i) => {
             headers: {
               'x-api-key': i.apiKey,
               'x-agent-run-id': i.runId,
-              ...(i.traceparent && { traceparent: i.traceparent }),
+              ...(traceparent && { traceparent }),
             },
           },
         },
@@ -67,6 +115,7 @@ export const runAgent: RunAgent = async (i) => {
         maxBudgetUsd: i.maxBudgetUsd,
       },
     })) {
+      tracer.onMessage(m);
       if (m.type !== 'result') continue;
       const usage = Object.values(m.modelUsage);
       const sum = (f: (u: (typeof usage)[number]) => number) =>
@@ -96,7 +145,7 @@ export const runAgent: RunAgent = async (i) => {
     clearTimeout(timer);
   }
   return result;
-};
+}
 
 const emptyResult = (
   status: RunAgentResult['status'],
@@ -108,3 +157,8 @@ const emptyResult = (
   costMicros: 0,
   error,
 });
+
+// Loaded on the first run, not at the top: the SDK is ESM-only and only the agent process needs it.
+export const runAgent = makeRunAgent(
+  async () => (await import('@anthropic-ai/claude-agent-sdk')).query,
+);
