@@ -1,0 +1,21 @@
+{
+  "name": "staysync-adk-agent",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Second agent for the StaySync evals: Google ADK with Gemini, over the same MCP server",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test dist/*.test.js"
+  },
+  "dependencies": {
+    "@google/adk": "^2.5.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.4",
+    "typescript": "^5.9.3"
+  }
+}

@@ -28,6 +28,7 @@ import {
 import type { EvalCase, Facts, Fixture, Observed } from './types';
 import type { RunAgent } from '../src/agent/agent.types';
 import { runAgent as runClaude } from '../src/agent/run-agent';
+import { adkBuilt, hasGeminiKey, runAdk } from './adapters/adk';
 import { startTracing } from '../src/tracing/start';
 import { inSpan } from '../src/tracing/trace';
 
@@ -38,7 +39,8 @@ const RUN_TIMEOUT_MS = 120_000;
 const { values: args } = parseArgs({
   options: {
     agent: { type: 'string', default: 'claude' },
-    model: { type: 'string', default: 'claude-haiku-5-5' },
+    model: { type: 'string' }, // default claude-haiku-5-5; required for adk (a Gemini model id)
+    pause: { type: 'string', default: '0' }, // seconds between runs, for a free tier's rate limit
     repeat: { type: 'string', default: '3' },
     budget: { type: 'string' }, // USD, required
     case: { type: 'string', multiple: true }, // run only cases whose id starts with one of these
@@ -50,7 +52,7 @@ const { values: args } = parseArgs({
 });
 
 /** The adapter registry: every agent framework is a `RunAgent`. ADK joins in M17. */
-const adapters: Record<string, RunAgent> = { claude: runClaude };
+const adapters: Record<string, RunAgent> = { claude: runClaude, adk: runAdk };
 
 function fail(msg: string): never {
   console.error(`eval: ${msg}`);
@@ -69,13 +71,29 @@ async function main() {
   if (!Number.isInteger(repeat) || repeat < 1)
     fail('--repeat must be a positive integer');
   const agent = args.agent;
-  const model = args.model;
+  const model =
+    args.model ??
+    (agent === 'claude'
+      ? 'claude-haiku-5-5'
+      : fail(
+          '--model is required for this agent (a Gemini model id from Google AI Studio)',
+        ));
+  const pauseMs = Number(args.pause) * 1000;
+  if (!(pauseMs >= 0)) fail('--pause must be a number of seconds');
   if (!adapters[agent])
     fail(
       `unknown --agent ${agent} (have: ${Object.keys(adapters).join(', ')})`,
     );
   if (agent === 'claude' && !process.env.ANTHROPIC_API_KEY)
     fail('ANTHROPIC_API_KEY is not set');
+  if (agent === 'adk') {
+    if (!adkBuilt())
+      fail(
+        'build the ADK agent first: npm ci --prefix agents/adk && npm run build --prefix agents/adk',
+      );
+    if (!hasGeminiKey())
+      fail('no Gemini key: set GEMINI_API_KEY, or put it in agents/adk/.env');
+  }
   const systemPrompt = args['prompt-file']
     ? readFileSync(args['prompt-file'], 'utf8')
     : undefined;
@@ -284,6 +302,8 @@ async function main() {
           stopped = true;
           break;
         }
+        if (pauseMs && (runsOfCase.length || results.length))
+          await new Promise((r) => setTimeout(r, pauseMs));
         runsOfCase.push(await runOnce(c));
         console.error(
           `${c.id} #${i + 1}: ${runsOfCase[i].pass ? 'pass' : 'FAIL'}  ($${(spent / 1e6).toFixed(4)} of $${budgetUsd})`,

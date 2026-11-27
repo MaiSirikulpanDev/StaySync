@@ -168,6 +168,31 @@ does not now, or a pass rate more than 5 points lower). Record a baseline with `
 prompt with `--prompt-file`. The grader tests run in `npm test` with no key; the paid run is the `Evals` workflow
 (manual, or the `run-evals` label on a PR).
 
+#### A second agent: Google ADK
+
+`agents/adk` runs the same task with Google's Agent Development Kit and Gemini: an `LlmAgent` with an `MCPToolset` on
+the same `/mcp`, the same prompt (a test checks the two prompts are identical) and the same `x-agent-run-id`, so the
+server records its tool calls and proposals exactly as for the Claude agent. It is a separate package with its own
+dependencies, only the eval runner calls it, and `api`, `worker` and the Claude agent never load it. The tool allow-list
+is the same eight StaySync tools.
+
+```bash
+npm ci --prefix agents/adk && npm run build --prefix agents/adk
+cp agents/adk/.env.example agents/adk/.env        # put a Google AI Studio key in it (no billing enabled)
+npm run eval -- --agent adk --model <a Gemini Flash model id> --repeat 3 --budget 1 --pause 15
+```
+
+`--pause` waits that many seconds between runs, for the free tier's rate limit. The ADK agent records tokens but a cost
+of 0, because the free tier is not billed. Its wiring (headers, allow-list, token sums, failures, timeout) is tested
+with a scripted model, so `npm test --prefix agents/adk` needs no key. To put results side by side:
+
+```bash
+npm run eval:compare -- evals/results/<claude>.json evals/results/<adk>.json
+```
+
+Comparison table: **not run yet.** It needs a real run of each agent, and I will not fill it in with made-up numbers.
+See [ADR 0009](docs/adr/0009-second-agent-adk.md) for what is known so far.
+
 ## Design decisions
 
 - **The database prevents double bookings**, not application code: a PostgreSQL exclusion constraint on a half-open

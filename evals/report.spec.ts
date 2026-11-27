@@ -1,4 +1,5 @@
 import {
+  comparisonTable,
   compare,
   EvalResults,
   PASS_RATE_TOLERANCE,
@@ -142,5 +143,23 @@ describe('toMarkdown', () => {
     expect(md).toContain('| i-x | 0/3 |');
     expect(md).toContain('filed no proposal (CANCEL_STAY)');
     expect(md).toContain('| injection | 1 | 0/1 |');
+  });
+});
+
+describe('comparisonTable', () => {
+  it('has one row per agent with rates, cost per run and median latency', () => {
+    const a = results({ x: [true, true, true], y: [true, false, true] });
+    const b = {
+      ...results({ x: [true, true, true], y: [true, true, true] }),
+      agent: 'adk',
+      model: 'gemini-test',
+    };
+    const md = comparisonTable([a, b]);
+    expect(md).toContain(
+      '| claude | claude-haiku-5-5 | 2 × 3 | 83.3% | 50.0% | $0.0020 | 4.0s |',
+    );
+    expect(md).toContain(
+      '| adk | gemini-test | 2 × 3 | 100.0% | 100.0% | $0.0020 | 4.0s |',
+    );
   });
 });
