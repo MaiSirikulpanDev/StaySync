@@ -1,0 +1,46 @@
+{
+  "property": {
+    "name": "Beach House",
+    "timezone": "Australia/Brisbane",
+    "currency": "AUD",
+    "baseRateCents": 20000,
+    "minStay": 2,
+    "maxGuests": 4
+  },
+  "rules": [{ "type": "WEEKEND", "adjustPercent": 20 }],
+  "stays": [
+    {
+      "key": "ann",
+      "kind": "BOOKING",
+      "checkIn": "2026-12-10",
+      "checkOut": "2026-12-12",
+      "guestName": "Ann Lee",
+      "guestEmail": "ann@example.com",
+      "guests": 2
+    },
+    {
+      "key": "bob",
+      "kind": "BOOKING",
+      "checkIn": "2026-12-23",
+      "checkOut": "2026-12-28",
+      "guestName": "Bob Ray",
+      "guestEmail": "bob@example.com",
+      "guests": 2
+    },
+    {
+      "key": "cara",
+      "kind": "BOOKING",
+      "checkIn": "2026-11-20",
+      "checkOut": "2026-11-24",
+      "guestName": "Cara Nguyen",
+      "guestEmail": "cara@example.com",
+      "guests": 3
+    },
+    {
+      "key": "owner",
+      "kind": "BLOCK",
+      "checkIn": "2027-01-05",
+      "checkOut": "2027-01-10"
+    }
+  ]
+}

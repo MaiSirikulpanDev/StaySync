@@ -1,0 +1,45 @@
+[
+  {
+    "id": "m-one-night",
+    "kind": "min-stay-or-guests",
+    "message": {
+      "fromName": "Lia Fox",
+      "body": "Can I book just the night of 14 December 2026? 1 guest."
+    },
+    "expect": {
+      "proposal": "none",
+      "reply": {
+        "matches": ["minimum|(?<!\\d)(2|two)(?!\\d)\\s*nights?"]
+      }
+    }
+  },
+  {
+    "id": "m-five-guests",
+    "kind": "min-stay-or-guests",
+    "message": {
+      "fromName": "Max Roy",
+      "body": "We are 5 people. Book 14-17 December 2026 please."
+    },
+    "expect": {
+      "proposal": "none",
+      "reply": {
+        "matches": ["\\b(4|four)\\b"]
+      }
+    }
+  },
+  {
+    "id": "m-shorten-below-min",
+    "kind": "min-stay-or-guests",
+    "message": {
+      "fromName": "Ann Lee",
+      "body": "We need to leave a day early, can we check out on 11 December?",
+      "stay": "ann"
+    },
+    "expect": {
+      "proposal": "none",
+      "reply": {
+        "matches": ["minimum|(?<!\\d)(2|two)(?!\\d)\\s*nights?"]
+      }
+    }
+  }
+]

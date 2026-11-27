@@ -7,6 +7,7 @@ export interface RunAgentInput {
   today: string; // YYYY-MM-DD, given so relative dates ("this Friday") resolve the same in evals
   timeoutMs: number;
   maxBudgetUsd: number; // hard cap for this one run
+  systemPrompt?: string; // replaces the built-in prompt; the eval runner uses it to test a changed prompt
 }
 
 export interface RunAgentResult {

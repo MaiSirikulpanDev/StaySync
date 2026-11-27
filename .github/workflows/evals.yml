@@ -1,0 +1,49 @@
+name: Evals
+# Calls the paid Claude API, so it never runs on a plain push: start it by hand, or label a PR `run-evals`.
+# CI (ci.yml) runs the grader tests without any key.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Model id for the agent
+        default: claude-haiku-5-5
+      repeat:
+        description: Runs per case
+        default: '3'
+      budget:
+        description: Spend limit in USD (the run stops when it is reached)
+        default: '1'
+  pull_request:
+    types: [labeled]
+
+jobs:
+  evals:
+    # Only for the label, and only for PRs from this repository (a fork would not get the secret anyway).
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'run-evals' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Run the evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MODEL: ${{ inputs.model || 'claude-haiku-5-5' }}
+          REPEAT: ${{ inputs.repeat || '3' }}
+          BUDGET: ${{ inputs.budget || '1' }}
+        run: npm run eval -- --agent claude --model "$MODEL" --repeat "$REPEAT" --budget "$BUDGET" | tee eval-report.md
+      - name: Show the report
+        if: always()
+        run: |
+          [ -f eval-report.md ] && cat eval-report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: evals/results/

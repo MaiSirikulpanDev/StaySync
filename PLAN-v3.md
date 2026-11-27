@@ -12,7 +12,8 @@
 > Phase 3. Where they disagree, this file wins. Build one milestone at a time (section 7). **Never run anything that
 > calls a paid model API unless the owner says yes in chat.** `npm test` and CI must pass without any AI key.
 >
-> **Status:** M13 is done. M14 is built and tested without a key; its paid smoke run is waiting for the owner's go-ahead.
+> **Status:** M13 is done. M14 is merged; its paid smoke run is waiting for the owner's go-ahead. M15 is built and
+> its grader tests pass; the first paid eval run and the baseline are waiting for the owner's go-ahead.
 
 ---
 
@@ -264,7 +265,7 @@ runs happen only where a milestone says so, with the owner's go-ahead.
 **Done when:** with `--profile ai`, a seeded guest message produces a sensible draft and a proposal, and approving
 it creates the stay, which then reaches the mock OTA.
 
-### M15: Eval harness (first eval runs, about $0.50)
+### M15: Eval harness (first eval runs, about $0.50) 🚧 code done, first run pending
 
 - Build `evals/` as described in §5: cases, graders, runner, baseline, Markdown report.
 - Add the GitHub workflow for manual or label-triggered evals.
