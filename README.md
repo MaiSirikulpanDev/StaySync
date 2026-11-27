@@ -222,6 +222,24 @@ consumer groups (`ota-sync process`, `occupancy-projection process`) and `ota pu
 outbox row and travels in the Kafka `traceparent` header, so the async hop does not break the trace. If the caller
 sends a `traceparent` header, the trace continues from it.
 
+### Seeing one agent run as one trace
+
+With `--profile ai`, post a guest message and open the `POST /properties/:id/guest-messages` trace in Jaeger. It goes on
+through `outbox publish` and `agent-claude process` into the agent: an `invoke_agent staysync-inbox` span with a
+`chat <model>` span per model turn and an `execute_tool <name>` span per tool call. The agent hands its trace context to
+the MCP connection, so the server's own `POST /mcp` and `mcp.tool ...` spans appear under the same run.
+
+Spans use the OpenTelemetry GenAI attributes (`gen_ai.request.model`, `gen_ai.usage.input_tokens`,
+`gen_ai.usage.output_tokens`, `gen_ai.tool.name`), and the run span adds `staysync.cost_usd`, `staysync.turns` and
+`staysync.tool_calls`. Input tokens include cache reads and writes, as on `AgentRun`. Tool inputs and results are not
+put on spans, because they hold guest text. Turn spans start when the previous event ended and end when the SDK reports
+the turn, so their timing is per turn, not per token. The eval runner opens one span per case run and stores its trace
+id on the `AgentRun`, so the report's trace column opens that run in Jaeger when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+
+Optional: to get LLM-specific views, point `OTEL_EXPORTER_OTLP_ENDPOINT` (and `OTEL_EXPORTER_OTLP_HEADERS`) at an
+OTLP/HTTP endpoint that reads the GenAI attributes, such as Langfuse Cloud. That needs no code change, but I have not
+tried it.
+
 ## Tests
 
 | Layer | What | Tooling |

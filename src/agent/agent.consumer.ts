@@ -82,7 +82,6 @@ export class AgentConsumer implements OnModuleInit {
       model,
       mcpUrl: this.config.get('STAYSYNC_MCP_URL', { infer: true }),
       apiKey: this.config.get('API_KEY', { infer: true }),
-      traceparent: currentTraceparent(),
       today: new Date().toISOString().slice(0, 10),
       timeoutMs: this.config.get('AGENT_RUN_TIMEOUT_MS', { infer: true }),
       maxBudgetUsd: remainingUsd(spent, limit),

@@ -3,7 +3,6 @@ export interface RunAgentInput {
   model: string;
   mcpUrl: string;
   apiKey: string; // the StaySync API key, for the MCP connection
-  traceparent: string | null; // so the agent's MCP calls join the trace that triggered the run
   today: string; // YYYY-MM-DD, given so relative dates ("this Friday") resolve the same in evals
   timeoutMs: number;
   maxBudgetUsd: number; // hard cap for this one run

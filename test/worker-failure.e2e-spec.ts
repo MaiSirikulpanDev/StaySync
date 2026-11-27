@@ -19,7 +19,12 @@ describe('worker failure', () => {
     workers.push(w);
     return w;
   };
-  const processed = () => prisma.processedEvent.count();
+  // Only this test's own events count. Other specs leave unconsumed events on the topic and the
+  // groups are shared, so the workers also pick up strays; counting every inbox row would then
+  // overshoot N and the wait below would never see it.
+  let ids: string[] = [];
+  const processed = () =>
+    prisma.processedEvent.count({ where: { eventId: { in: ids } } });
 
   beforeAll(() =>
     prisma.$executeRawUnsafe(
@@ -42,7 +47,8 @@ describe('worker failure', () => {
       return apply(e);
     });
 
-    await prisma.outboxEvent.createMany({
+    const rows = await prisma.outboxEvent.createManyAndReturn({
+      select: { id: true },
       data: Array.from({ length: N }, (_, i) => ({
         type: 'stay.created',
         payload: {
@@ -56,6 +62,7 @@ describe('worker failure', () => {
         },
       })),
     });
+    ids = rows.map((r) => r.id);
 
     await waitFor(async () => (await processed()) >= 20, 30000);
     await a.close(); // mid-stream: its partitions move to the other worker
@@ -65,7 +72,7 @@ describe('worker failure', () => {
     expect(await processed()).toBe(N);
     const [totals] = await prisma.$queryRaw<
       { nights: bigint; cents: bigint }[]
-    >`SELECT SUM("bookedNights") AS nights, SUM("revenueCents") AS cents FROM "PropertyOccupancyDaily"`;
+    >`SELECT SUM("bookedNights") AS nights, SUM("revenueCents") AS cents FROM "PropertyOccupancyDaily" WHERE "propertyId" = ANY(${PROPERTIES}::uuid[])`;
     expect([Number(totals.nights), Number(totals.cents)]).toEqual([N, N * 100]);
   });
 });

@@ -14,6 +14,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { INestApplication } from '@nestjs/common';
+import { ROOT_CONTEXT, SpanKind } from '@opentelemetry/api';
 import { grade, passed } from './graders';
 import { loadCases, loadFixture } from './load';
 import {
@@ -27,6 +28,8 @@ import {
 import type { EvalCase, Facts, Fixture, Observed } from './types';
 import type { RunAgent } from '../src/agent/agent.types';
 import { runAgent as runClaude } from '../src/agent/run-agent';
+import { startTracing } from '../src/tracing/start';
+import { inSpan } from '../src/tracing/trace';
 
 const TODAY = '2026-10-05'; // the agent's "today", fixed so relative dates resolve the same every run
 const API_KEY = 'eval-key';
@@ -55,6 +58,8 @@ function fail(msg: string): never {
 }
 
 async function main() {
+  // Spans (and so trace ids) exist either way; they reach Jaeger only if OTEL_EXPORTER_OTLP_ENDPOINT is set.
+  const tracing = startTracing('staysync-eval');
   const repeat = Number(args.repeat);
   const budgetUsd = Number(args.budget);
   if (!args.budget || !(budgetUsd > 0))
@@ -195,10 +200,16 @@ async function main() {
     const results: CaseResult[] = [];
     let stopped = false;
 
-    async function runOnce(c: EvalCase): Promise<RunResult> {
+    /** One span per case run, so the report's trace id opens the whole run in Jaeger. */
+    const runOnce = (c: EvalCase) =>
+      inSpan(`eval ${c.id}`, SpanKind.INTERNAL, ROOT_CONTEXT, (span) =>
+        runCase(c, span.spanContext().traceId),
+      );
+
+    async function runCase(c: EvalCase, traceId: string): Promise<RunResult> {
       const { messageId, facts } = await seed(c, fixture);
       const run = await prisma.agentRun.create({
-        data: { guestMessageId: messageId, agent, model },
+        data: { guestMessageId: messageId, agent, model, traceId },
       });
       const started = Date.now();
       const r = await runAgent({
@@ -206,7 +217,6 @@ async function main() {
         model,
         mcpUrl: `${base}/mcp`,
         apiKey: API_KEY,
-        traceparent: null,
         today: TODAY,
         timeoutMs: RUN_TIMEOUT_MS,
         maxBudgetUsd: Math.max(0.001, budgetUsd - spent / 1e6),
@@ -331,6 +341,7 @@ async function main() {
     } else if (stopped) process.exitCode = 2;
   } finally {
     await app?.close();
+    await tracing.shutdown(); // flushes the spans
     await Promise.all([pg.stop(), kafka.stop()]);
   }
 }
