@@ -155,14 +155,15 @@ describe('one trace from a guest message to the agent’s tool calls', () => {
     const publish = one('outbox publish');
     const consume = one('agent-claude process');
     const run = one('invoke_agent staysync-inbox');
-    const mcpRequest = spans.find(
-      (s) => s.kind === SpanKind.SERVER && parentOf(s) === id(run),
-    )!;
     const mcpTool = one('mcp.tool get_guest_message');
+    // One MCP session is several HTTP requests (initialize, the call); the tool ran in the last one.
+    const mcpRequest = spans.find((s) => id(s) === parentOf(mcpTool))!;
 
-    expect(parentOf(publish)).toBe(
-      id(spans.find((s) => s.kind === SpanKind.SERVER)!),
-    );
+    const post = spans.find(
+      (s) => s.kind === SpanKind.SERVER && s.name.includes('guest-messages'),
+    )!;
+    expect(parentOf(post)).toBe('00f067aa0ba902b7'); // continues the caller's trace
+    expect(parentOf(publish)).toBe(id(post));
     expect(parentOf(consume)).toBe(id(publish));
     expect(consume.kind).toBe(SpanKind.CONSUMER);
     expect(parentOf(run)).toBe(id(consume));
@@ -182,7 +183,7 @@ describe('one trace from a guest message to the agent’s tool calls', () => {
     expect(parentOf(one('execute_tool get_guest_message'))).toBe(id(run));
 
     // the server side of the same MCP call is in the same trace, under the run span
-    expect(mcpRequest).toBeDefined();
-    expect(parentOf(mcpTool)).toBe(id(mcpRequest));
+    expect(mcpRequest.kind).toBe(SpanKind.SERVER);
+    expect(parentOf(mcpRequest)).toBe(id(run));
   });
 });
