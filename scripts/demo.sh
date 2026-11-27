@@ -41,8 +41,10 @@ say "4. Quote $IN to $OUT (per-night breakdown, weekend uplift applied)"
 call GET "/properties/$ID/quote?checkIn=$IN&checkOut=$OUT&guests=2"
 
 say "5. Book it"
-call POST "/properties/$ID/stays" \
-  "{\"kind\":\"BOOKING\",\"checkIn\":\"$IN\",\"checkOut\":\"$OUT\",\"guestName\":\"Ada Lovelace\",\"guests\":2}"
+BOOKED=$(call POST "/properties/$ID/stays" \
+  "{\"kind\":\"BOOKING\",\"checkIn\":\"$IN\",\"checkOut\":\"$OUT\",\"guestName\":\"Ada Lovelace\",\"guests\":2}")
+echo "$BOOKED"
+STAY=$(echo "$BOOKED" | field id)
 
 say "6. Try to double-book overlapping dates -> 409 from the database constraint"
 call POST "/properties/$ID/stays" \
@@ -95,5 +97,12 @@ echo "$(echo "$AV" | grep -o '"available":false' | wc -l | tr -d ' ') unavailabl
 
 say "11. iCal feed for Airbnb / Booking.com (no guest details)"
 curl -s "$API/properties/$ID/calendar.ics?token=$TOKEN"
+
+# The AI part runs only when the agent is up (it calls the paid Claude API), or with DEMO_AGENT=1.
+if [ "${DEMO_AGENT:-}" = 1 ] || [ -n "$(docker compose ps -q agent 2>/dev/null || true)" ]; then
+  PROPERTY=$ID STAY=$STAY LISTING=$LISTING API=$API OTA=$OTA API_KEY=$KEY "$(dirname "$0")/demo-agent.sh"
+else
+  printf '\n(skipped the AI steps: start the agent with  ANTHROPIC_API_KEY=... docker compose --profile ai up -d agent  and run again)\n'
+fi
 
 printf '\nDone. Swagger UI: %s/docs   Traces: http://localhost:16686 (service staysync-api)\n' "$API"

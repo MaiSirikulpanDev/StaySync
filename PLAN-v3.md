@@ -13,8 +13,9 @@
 > calls a paid model API unless the owner says yes in chat.** `npm test` and CI must pass without any AI key.
 >
 > **Status:** M13 is done. M14 is merged; its paid smoke run is waiting for the owner's go-ahead. M15 is built and
-> merged; the first paid eval run and the baseline are waiting for the owner's go-ahead. M16 is merged. M17 is built and its
-> wiring is tested without a key; the comparison table waits for real runs of both agents.
+> merged; the first paid eval run and the baseline are waiting for the owner's go-ahead. M16 is merged. M17 is merged. M18 is built
+> except what needs measured numbers: the README says "not run yet" for the results table and the real cost, and the
+> comparison table and ADR 0009's last section wait for real runs of both agents.
 
 ---
 
@@ -297,7 +298,7 @@ MCP tool calls, and the eval report shows real cost per case.
 
 **Done when:** the comparison table exists, with honest numbers.
 
-### M18: Polish (what reviewers see first)
+### M18: Polish (what reviewers see first) 🚧 done except the parts that need real runs
 
 - README sections:
   - "Phase 2 → Phase 3" with the AI architecture diagram,
