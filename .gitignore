@@ -26,3 +26,5 @@ lerna-debug.log*
 
 # eval outputs (evals/baseline.json is the committed reference)
 /evals/results
+/agents/adk/node_modules
+/agents/adk/dist

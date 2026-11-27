@@ -158,3 +158,22 @@ export function toMarkdown(r: EvalResults, regressions: string[] = []): string {
   }
   return lines.join('\n') + '\n';
 }
+
+/**
+ * One row per results file, for the README comparison: the same cases, graders and repeat
+ * count for each agent. Cost is what the run recorded; a free tier records 0.
+ */
+export function comparisonTable(all: EvalResults[]): string {
+  const lines = [
+    '| agent | model | cases × runs | pass rate | pass^k | cost per run | p50 latency |',
+    '|---|---|---|---|---|---|---|',
+  ];
+  for (const r of all) {
+    const s = summarize(r);
+    const runs = r.cases.length * r.repeat;
+    lines.push(
+      `| ${r.agent} | ${r.model} | ${r.cases.length} × ${r.repeat} | ${pct(s.passRate)} | ${pct(s.passAll)} | ${usd(s.costMicros / Math.max(1, runs))} | ${sec(s.p50Ms)} |`,
+    );
+  }
+  return lines.join('\n') + '\n';
+}

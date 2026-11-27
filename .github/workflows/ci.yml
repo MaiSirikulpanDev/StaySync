@@ -12,3 +12,6 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm test
+      # The second agent (Google ADK) has its own dependencies and tests; they need no key.
+      - run: npm ci --prefix agents/adk
+      - run: npm test --prefix agents/adk

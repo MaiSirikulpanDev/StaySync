@@ -13,8 +13,8 @@
 > calls a paid model API unless the owner says yes in chat.** `npm test` and CI must pass without any AI key.
 >
 > **Status:** M13 is done. M14 is merged; its paid smoke run is waiting for the owner's go-ahead. M15 is built and
-> merged; the first paid eval run and the baseline are waiting for the owner's go-ahead. M16 is built and tested
-> without a key.
+> merged; the first paid eval run and the baseline are waiting for the owner's go-ahead. M16 is merged. M17 is built and its
+> wiring is tested without a key; the comparison table waits for real runs of both agents.
 
 ---
 
@@ -288,7 +288,7 @@ against the baseline.
 **Done when:** one Jaeger trace runs from `POST /guest-messages` through outbox → Kafka → agent → model turns →
 MCP tool calls, and the eval report shows real cost per case.
 
-### M17: Google ADK agent and the comparison ($0, Gemini free tier)
+### M17: Google ADK agent and the comparison ($0, Gemini free tier) 🚧 code done, comparison pending
 
 - Build `agents/adk` with `@google/adk`, using an `LlmAgent` and an `MCPToolset` on the same `/mcp`. The task prompt
   is the same as for the Claude agent. It is called by the eval runner with a run id.
