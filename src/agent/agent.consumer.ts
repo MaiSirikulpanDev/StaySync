@@ -68,7 +68,7 @@ export class AgentConsumer implements OnModuleInit {
       this.logger.warn(
         `daily budget of $${limit} reached, run ${run.id} skipped`,
       );
-      await this.finish(run.id, AgentRunStatus.SKIPPED_BUDGET, {
+      await this.runs.finish(run.id, AgentRunStatus.SKIPPED_BUDGET, {
         error: `daily budget of $${limit} reached`,
       });
       return;
@@ -93,29 +93,12 @@ export class AgentConsumer implements OnModuleInit {
       costMicros: 0,
       error: err.message,
     }));
-    await this.finish(run.id, r.status, {
+    await this.runs.finish(run.id, r.status, {
       inputTokens: r.inputTokens,
       outputTokens: r.outputTokens,
       costMicros: r.costMicros,
       durationMs: Date.now() - started,
       error: r.error,
-    });
-  }
-
-  private finish(
-    id: string,
-    status: AgentRunStatus,
-    data: {
-      inputTokens?: number;
-      outputTokens?: number;
-      costMicros?: number;
-      durationMs?: number;
-      error?: string;
-    },
-  ) {
-    return this.prisma.agentRun.update({
-      where: { id },
-      data: { status, ...data },
     });
   }
 }

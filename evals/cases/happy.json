@@ -1,0 +1,209 @@
+[
+  {
+    "id": "h-free-quote-feb",
+    "kind": "happy",
+    "message": {
+      "fromName": "Eve Park",
+      "body": "Hi! Is 1-4 February 2027 free for 2 people, and what would it cost in total?"
+    },
+    "expect": {
+      "proposal": "none",
+      "reply": {
+        "quote": {
+          "checkIn": "2027-02-01",
+          "checkOut": "2027-02-04",
+          "guests": 2
+        }
+      }
+    }
+  },
+  {
+    "id": "h-book-dec14",
+    "kind": "happy",
+    "message": {
+      "fromName": "Dave Kim",
+      "body": "Hello, I'd like to book Beach House from 14 to 17 December 2026 for 3 people. My name is Dave Kim."
+    },
+    "expect": {
+      "proposal": {
+        "type": "CREATE_BOOKING",
+        "params": {
+          "checkIn": "2026-12-14",
+          "checkOut": "2026-12-17",
+          "guests": 3
+        },
+        "guestNameIncludes": "Kim"
+      },
+      "reply": {
+        "quote": {
+          "checkIn": "2026-12-14",
+          "checkOut": "2026-12-17",
+          "guests": 3
+        }
+      }
+    }
+  },
+  {
+    "id": "h-extend-one-night",
+    "kind": "happy",
+    "message": {
+      "fromName": "Ann Lee",
+      "body": "Hi, could we extend our stay by one night?",
+      "stay": "ann"
+    },
+    "expect": {
+      "proposal": {
+        "type": "CHANGE_DATES",
+        "params": {
+          "checkIn": "2026-12-10",
+          "checkOut": "2026-12-13"
+        },
+        "stay": "ann"
+      },
+      "reply": {
+        "matches": ["(?<!\\d)13(?!\\d)"]
+      }
+    }
+  },
+  {
+    "id": "h-extend-two-nights",
+    "kind": "happy",
+    "message": {
+      "fromName": "Ann Lee",
+      "body": "We love it here! Can we stay until the 14th of December instead?",
+      "stay": "ann"
+    },
+    "expect": {
+      "proposal": {
+        "type": "CHANGE_DATES",
+        "params": {
+          "checkIn": "2026-12-10",
+          "checkOut": "2026-12-14"
+        },
+        "stay": "ann"
+      }
+    }
+  },
+  {
+    "id": "h-cancel",
+    "kind": "happy",
+    "message": {
+      "fromName": "Cara Nguyen",
+      "body": "Sorry, our plans changed. Please cancel our booking.",
+      "stay": "cara"
+    },
+    "expect": {
+      "proposal": {
+        "type": "CANCEL_STAY",
+        "params": {},
+        "stay": "cara"
+      }
+    }
+  },
+  {
+    "id": "h-weekend-price",
+    "kind": "happy",
+    "message": {
+      "fromName": "Fay Wong",
+      "body": "How much would Friday 18 to Monday 21 December 2026 cost for 2 of us?"
+    },
+    "expect": {
+      "proposal": "none",
+      "reply": {
+        "quote": {
+          "checkIn": "2026-12-18",
+          "checkOut": "2026-12-21",
+          "guests": 2
+        }
+      }
+    }
+  },
+  {
+    "id": "h-book-ja",
+    "kind": "happy",
+    "message": {
+      "fromName": "田中 花子",
+      "body": "12月14日から17日まで、3人で予約したいです。名前は田中花子です。"
+    },
+    "expect": {
+      "proposal": {
+        "type": "CREATE_BOOKING",
+        "params": {
+          "checkIn": "2026-12-14",
+          "checkOut": "2026-12-17",
+          "guests": 3
+        },
+        "guestNameIncludes": "田中"
+      },
+      "reply": {
+        "matches": ["[\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Han}]"]
+      }
+    }
+  },
+  {
+    "id": "h-book-feb-long",
+    "kind": "happy",
+    "message": {
+      "fromName": "Emi Sato",
+      "body": "Can I book 1 to 8 February 2027 for 2 people? Name: Emi Sato"
+    },
+    "expect": {
+      "proposal": {
+        "type": "CREATE_BOOKING",
+        "params": {
+          "checkIn": "2027-02-01",
+          "checkOut": "2027-02-08",
+          "guests": 2
+        },
+        "guestNameIncludes": "Sato"
+      },
+      "reply": {
+        "quote": {
+          "checkIn": "2027-02-01",
+          "checkOut": "2027-02-08",
+          "guests": 2
+        }
+      }
+    }
+  },
+  {
+    "id": "h-max-guests-info",
+    "kind": "happy",
+    "message": {
+      "fromName": "Gus Ito",
+      "body": "Before I book: how many people can stay, and what's the minimum number of nights?"
+    },
+    "expect": {
+      "proposal": "none",
+      "reply": {
+        "matches": ["\\b(4|four)\\b", "\\b(2|two)\\b"]
+      }
+    }
+  },
+  {
+    "id": "h-book-saturday",
+    "kind": "happy",
+    "message": {
+      "fromName": "Hana Lee",
+      "body": "Please book me Saturday 19 to Monday 21 December 2026, just me. Hana Lee."
+    },
+    "expect": {
+      "proposal": {
+        "type": "CREATE_BOOKING",
+        "params": {
+          "checkIn": "2026-12-19",
+          "checkOut": "2026-12-21",
+          "guests": 1
+        },
+        "guestNameIncludes": "Hana"
+      },
+      "reply": {
+        "quote": {
+          "checkIn": "2026-12-19",
+          "checkOut": "2026-12-21",
+          "guests": 1
+        }
+      }
+    }
+  }
+]

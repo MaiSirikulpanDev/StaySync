@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { AgentRunStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -23,6 +23,24 @@ export class AgentRunsService {
     } catch (e) {
       this.logger.warn(`tool call not recorded: ${(e as Error).message}`);
     }
+  }
+
+  /** Closes a run with its outcome. Used by the agent consumer and by the eval runner. */
+  finish(
+    id: string,
+    status: AgentRunStatus,
+    data: {
+      inputTokens?: number;
+      outputTokens?: number;
+      costMicros?: number;
+      durationMs?: number;
+      error?: string;
+    } = {},
+  ) {
+    return this.prisma.agentRun.update({
+      where: { id },
+      data: { status, ...data },
+    });
   }
 
   /** Cost of every run since 00:00 UTC, in millionths of a USD. ponytail: UTC day, not the owner's. */

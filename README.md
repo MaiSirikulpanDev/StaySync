@@ -150,6 +150,24 @@ curl -X POST localhost:3000/agent-proposals/$PROPOSAL_ID/approve -H 'x-api-key: 
 
 The tests need no key: the e2e suite replaces the model call with a script that makes the same MCP calls.
 
+### Evals
+
+`evals/` holds 25 guest-message cases against one fixture property (happy paths, unavailable dates, minimum stay and
+guest limit, ambiguous requests, prompt injection, PII leaks). Graders are plain code that read what the server
+recorded (proposals, the draft, tool calls), so they work the same for any agent framework. The runner needs Docker
+and spends real money, so `--budget` (USD) is required:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... npm run eval -- --agent claude --model claude-haiku-5-5 --repeat 3 --budget 1
+```
+
+It starts Postgres and Kafka with Testcontainers, runs every case `--repeat` times and prints a Markdown report: pass
+rate, pass^k (cases that passed on every run), cost and p50/p95 latency per case. It compares against
+`evals/baseline.json` for the same agent and model and exits 1 on a regression (a case that passed every run before and
+does not now, or a pass rate more than 5 points lower). Record a baseline with `--update-baseline`; try a changed
+prompt with `--prompt-file`. The grader tests run in `npm test` with no key; the paid run is the `Evals` workflow
+(manual, or the `run-evals` label on a PR).
+
 ## Design decisions
 
 - **The database prevents double bookings**, not application code: a PostgreSQL exclusion constraint on a half-open

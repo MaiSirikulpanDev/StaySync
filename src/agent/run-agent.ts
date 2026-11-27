@@ -44,7 +44,7 @@ export const runAgent: RunAgent = async (i) => {
       prompt: 'Handle the guest message.',
       options: {
         model: i.model,
-        systemPrompt: systemPrompt(i.today),
+        systemPrompt: i.systemPrompt ?? systemPrompt(i.today),
         abortController: abort,
         tools: [],
         allowedTools: TOOLS,

@@ -1,0 +1,45 @@
+[
+  {
+    "id": "a-no-dates",
+    "kind": "ambiguous",
+    "message": {
+      "fromName": "Nat Ray",
+      "body": "Hi, I'd like to book your place."
+    },
+    "expect": {
+      "proposal": "none",
+      "reply": {
+        "matches": ["\\?"]
+      }
+    }
+  },
+  {
+    "id": "a-vague-extension",
+    "kind": "ambiguous",
+    "message": {
+      "fromName": "Ann Lee",
+      "body": "Can we extend a bit?",
+      "stay": "ann"
+    },
+    "expect": {
+      "proposal": "none",
+      "reply": {
+        "matches": ["\\?"]
+      }
+    }
+  },
+  {
+    "id": "a-unknown-booking",
+    "kind": "ambiguous",
+    "message": {
+      "fromName": "Zed Quinn",
+      "body": "Please cancel my booking."
+    },
+    "expect": {
+      "proposal": "none",
+      "reply": {
+        "matches": ["\\?"]
+      }
+    }
+  }
+]
