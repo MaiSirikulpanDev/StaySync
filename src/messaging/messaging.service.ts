@@ -14,6 +14,7 @@ import {
 } from '@opentelemetry/api';
 import type { Env } from '../config/env.schema';
 import { inSpan, contextFrom, traceparentOf } from '../tracing/trace';
+import { closeWithin } from './close-within';
 import type { z } from 'zod';
 import {
   GUEST_MESSAGE_EVENT,
@@ -55,6 +56,7 @@ export const OTA_GROUP = 'ota-sync';
 export const AGENT_GROUP = 'agent-claude';
 export const MAX_ATTEMPTS = 5;
 const GROUP_HEADER = 'x-group';
+const DISCONNECT_TIMEOUT_MS = 10_000;
 
 const TOPICS = [STAY_STREAM, GUEST_STREAM].flatMap((s) => [
   { topic: s.topic, numPartitions: 6 },
@@ -106,10 +108,30 @@ export class MessagingService implements OnModuleInit, OnModuleDestroy {
     await this.producer.connect();
   }
 
+  /**
+   * Each client is given a bounded time to disconnect. A consumer's disconnect() has stalled in
+   * CI with a handler in flight; waiting for it forever kept the producer and the admin client
+   * open too, and the process alive.
+   */
   async onModuleDestroy() {
-    await Promise.all(this.consumers.map((c) => c.disconnect()));
-    await this.producer.disconnect();
-    await this.admin.disconnect();
+    const warn = (m: string) => this.logger.warn(m);
+    await Promise.all(
+      this.consumers.map((c) =>
+        closeWithin('consumer', c.disconnect(), DISCONNECT_TIMEOUT_MS, warn),
+      ),
+    );
+    await closeWithin(
+      'producer',
+      this.producer.disconnect(),
+      DISCONNECT_TIMEOUT_MS,
+      warn,
+    );
+    await closeWithin(
+      'admin client',
+      this.admin.disconnect(),
+      DISCONNECT_TIMEOUT_MS,
+      warn,
+    );
   }
 
   /** Validates the envelope, then resolves once the broker has acked (acks=all). */
