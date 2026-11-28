@@ -367,6 +367,10 @@ npm run test:e2e    # e2e only
 
 Dates in tests are fixed (the app takes an injectable clock), so nothing depends on today's date.
 
+The e2e run force-exits Jest and the CI job has a 20-minute limit: a native Kafka client that stalls while closing, after a
+test that timed out, would otherwise keep Jest alive and the job running for hours. Failures are still reported; this only
+stops a leaked client from turning one into a hang.
+
 ## Configuration
 
 See [`.env.example`](.env.example). The app validates its environment on startup and exits on a bad value.

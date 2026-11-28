@@ -3,6 +3,8 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A normal run takes about 3 minutes. Without a limit, one hung e2e run held the job for GitHub's 6 hours.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
